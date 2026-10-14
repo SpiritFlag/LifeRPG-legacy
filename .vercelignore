@@ -1,0 +1,6 @@
+.git/
+test/
+docs/
+scripts/
+.local/
+.env*
