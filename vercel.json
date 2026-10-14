@@ -1,6 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["sin1"],
+  "buildCommand": "npm run check",
+  "outputDirectory": "public",
   "rewrites": [{ "source": "/(.*)", "destination": "/api/server" }],
   "functions": { "api/server.js": { "maxDuration": 30 } }
 }
