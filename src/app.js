@@ -1,12 +1,15 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { authenticate, challenge, HttpError, json, oauthRoute, readBody } from './oauth.js';
 import { createMcpServer } from './tools.js';
+import { maintenanceResponse } from './maintenance.js';
 
 /** @param {import('./database.js').Database} db @param {import('./config.js').Config} config */
 export function createApp(db, config) {
   /** @param {Request} request */
   return async function handle(request) {
     try {
+      const maintenance = maintenanceResponse(request, config.maintenanceWrites);
+      if (maintenance) return maintenance;
       const path = new URL(request.url).pathname;
       if (path === '/health' && request.method === 'GET') return json({server:'liferpg-mcp-experiment',status:'running'});
       const oauth = await oauthRoute(db,config,request);

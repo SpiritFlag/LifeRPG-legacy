@@ -1,6 +1,15 @@
 .git/
 test/
 docs/
-scripts/
+DESIGN.md
+SPEC.md
+migrations/
+scripts/client.js
+scripts/setup-db.js
+scripts/smoke.js
+scripts/preview-web.js
+scripts/serve-web.js
+scripts/phase6-*.js
+scripts/phase7-*
 .local/
 .env*

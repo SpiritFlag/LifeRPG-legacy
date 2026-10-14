@@ -9,12 +9,20 @@
   "scripts": {
     "dev": "node --env-file=.env.local src/dev.js",
     "check": "tsc --noEmit",
-    "test": "node --test --test-concurrency=1 test/server.test.js",
+    "test": "node --test --test-concurrency=1 test/server.test.js test/events.test.js test/growth.test.js test/quests.test.js test/content.test.js test/world.test.js test/initialization.test.js test/db-setup.test.js test/maintenance.test.js",
     "test:browser": "node --test test/oauth-browser.test.js",
+    "test:initialization:browser": "npm run build && node --test test/initialization-browser.test.js",
     "db:setup": "node --env-file=.env.local scripts/setup-db.js",
-    "smoke": "node --env-file=.env.local scripts/smoke.js"
+    "smoke": "node --env-file=.env.local scripts/smoke.js",
+    "build": "npm run check && node scripts/build-web.js",
+    "dev:web": "node scripts/serve-web.js",
+    "preview:web": "node scripts/build-web.js && node scripts/preview-web.js",
+    "test:web": "node --test test/web.test.js",
+    "preview:web:clerk": "node scripts/build-web.js && node scripts/preview-web.js --clerk"
   },
   "dependencies": {
+    "@clerk/backend": "3.23.2",
+    "@clerk/clerk-js": "6.39.0",
     "@modelcontextprotocol/sdk": "1.32.1",
     "@vercel/functions": "3.10.1",
     "pg": "8.23.1",
@@ -24,6 +32,7 @@
     "@electric-sql/pglite": "0.3.15",
     "@types/node": "24.10.0",
     "@types/pg": "8.15.6",
+    "esbuild": "0.28.2",
     "playwright-core": "1.64.0",
     "typescript": "5.9.3"
   }

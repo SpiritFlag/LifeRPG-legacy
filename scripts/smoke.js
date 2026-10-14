@@ -12,7 +12,7 @@ const {tokens} = await login(base,config);
 const client = await mcpClient(base,tokens.access_token);
 try {
   const tools = await client.listTools();
-  assert.deepEqual(tools.tools.map(t => t.name),['get_gm_status','record_life_event','list_life_events']);
+  for (const name of ['get_gm_status','record_life_event','list_life_events']) assert.ok(tools.tools.some(t => t.name === name));
   const before = (await client.callTool({name:'get_gm_status',arguments:{}})).structuredContent;
   const event = {...testEvent,event_key:`synthetic-smoke-${randomUUID()}`};
   const results = await Promise.all([client.callTool({name:'record_life_event',arguments:event}),client.callTool({name:'record_life_event',arguments:event})]);

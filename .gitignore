@@ -6,3 +6,5 @@ node_modules/
 .local/
 coverage/
 *.log
+public/assets/
+public/index.html

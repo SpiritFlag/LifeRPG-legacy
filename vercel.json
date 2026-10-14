@@ -1,8 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["sin1"],
-  "buildCommand": "npm run check",
+  "buildCommand": "npm run build",
   "outputDirectory": "public",
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/server" }],
-  "functions": { "api/server.js": { "maxDuration": 30 } }
+  "rewrites": [
+    { "source": "/api/player", "destination": "/api/web" },
+    { "source": "/api/web-config", "destination": "/api/web" },
+    { "source": "/", "destination": "/index.html" },
+    { "source": "/((?!assets/|index\\.html).*)", "destination": "/api/server" }
+  ],
+  "headers": [{"source":"/(.*)","headers":[{"key":"X-Content-Type-Options","value":"nosniff"},{"key":"X-Frame-Options","value":"DENY"},{"key":"Referrer-Policy","value":"no-referrer"}]}],
+  "functions": { "api/server.js": { "maxDuration": 120 }, "api/web.js": { "maxDuration": 30 } }
 }

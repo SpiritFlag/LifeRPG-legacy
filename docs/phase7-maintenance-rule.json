@@ -1,0 +1,8 @@
+{
+  "name": "Life RPG transition maintenance",
+  "conditionGroup": [
+    { "conditions": [{ "type": "path", "op": "pre", "value": "/mcp" }] },
+    { "conditions": [{ "type": "path", "op": "pre", "value": "/oauth" }] }
+  ],
+  "action": { "mitigate": { "action": "deny" } }
+}

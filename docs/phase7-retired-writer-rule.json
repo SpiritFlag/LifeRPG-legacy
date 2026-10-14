@@ -1,0 +1,14 @@
+{
+  "name": "Life RPG canonical MCP origin only",
+  "conditionGroup": [
+    { "conditions": [
+      { "type": "path", "op": "pre", "value": "/mcp" },
+      { "type": "host", "op": "neq", "value": "liferpg-mcp-experiment.vercel.app" }
+    ] },
+    { "conditions": [
+      { "type": "path", "op": "pre", "value": "/oauth" },
+      { "type": "host", "op": "neq", "value": "liferpg-mcp-experiment.vercel.app" }
+    ] }
+  ],
+  "action": { "mitigate": { "action": "deny" } }
+}

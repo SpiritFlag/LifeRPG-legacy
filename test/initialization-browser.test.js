@@ -1,0 +1,36 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
+import { chromium } from 'playwright-core';
+import { startPreview } from '../scripts/preview-web.js';
+import { applyGmUpdate } from '../src/growth-storage.js';
+import { applyGmSchema } from '../src/growth-schema.js';
+
+test('isolated browser shows unstarted, preparing and completed birth, escaped public biography and narrow layout',async t=>{
+  const preview=await startPreview(0),browser=await chromium.launch({headless:true,...(process.env.BROWSER_EXECUTABLE_PATH ? {executablePath:process.env.BROWSER_EXECUTABLE_PATH} : {channel:'msedge'})});
+  t.after(async()=>{await browser.close();await preview.close();});
+  await mkdir('.local/phase5',{recursive:true});
+  const page=await browser.newPage({viewport:{width:1280,height:900}}),errors=[];
+  page.on('pageerror',error=>errors.push(error.message));
+  const url=`${preview.url}/?preview=empty#character`;
+  await page.goto(url);await page.getByText('첫 번째 페이지를 기다리는 중').waitFor();
+  await page.screenshot({path:'.local/phase5/unstarted.png',fullPage:true});
+  const update=input=>preview.fixture.db.transaction(tx=>applyGmUpdate(tx,'empty-preview-owner',applyGmSchema.parse(input),true));
+  const reason='Synthetic browser fixture',profile={name:'합성 기록술사',species:'별의 종족',birth:'허구의 등대에서 태어났다.',background:'<script>window.BIRTH_XSS=true</script>',destiny:'잃어버린 별의 이름을 찾는다.',gm_notes:'BROWSER_PRIVATE_BIRTH'};
+  const draft=await update({mode:'begin_initialization',request_key:'browser-begin',expected_revision:0,reason,synthetic:true,character:{profile,xp_total:300,stats:{STR:10,DEX:10,VIT:10,INT:10,CHA:10,LUK:10}},starting_location:'@harbor',content_changes:[{operation:'create_definition',ref:'@profession',definition_key:'archivist',kind:'profession',name:'기록술사',reason},{operation:'change_profession',ref:'@job',acquisition_key:'job',definition:'@profession',definition_version:1,reason}],world_changes:[{operation:'create_entity',ref:'@world',entity_key:'world',category:'world',kind:'world',name:'합성 별바다',reason},{operation:'create_entity',ref:'@harbor',entity_key:'harbor',category:'place',kind:'harbor',name:'시작 항구',parent:'@world',reason}]});
+  await page.reload();await page.getByText('초기 생성 준비 중').waitFor();
+  assert.ok(!(await page.locator('#main').innerText()).includes(profile.name));
+  await page.screenshot({path:'.local/phase5/preparing.png',fullPage:true});
+  await update({mode:'finalize_initialization',request_key:'browser-finalize',reason,initialization_id:draft.initialization.initialization_id,expected_initialization_revision:1});
+  await page.reload();await page.getByText('탄생과 운명',{exact:true}).waitFor();
+  assert.ok((await page.locator('#main').innerText()).includes(profile.destiny));
+  assert.equal(await page.evaluate(()=>window.BIRTH_XSS),undefined);
+  assert.ok(!(await page.content()).includes('BROWSER_PRIVATE_BIRTH'));
+  await page.screenshot({path:'.local/phase5/character-birth.png',fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  await page.getByText('탄생과 운명',{exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>window.innerWidth),390);
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+  await page.screenshot({path:'.local/phase5/character-birth-mobile.png',fullPage:true});
+  assert.deepEqual(errors,[]);
+});

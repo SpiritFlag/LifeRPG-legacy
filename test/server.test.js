@@ -15,6 +15,12 @@ const count = async () => (await db.query('SELECT count(*)::integer AS n FROM li
 before(async () => {
   pg = new PGlite();
   await pg.exec(await readFile(new URL('../migrations/001-experiment.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../migrations/002-life-event-history.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../migrations/003-gm-growth.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../migrations/004-questlines.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../migrations/005-character-content.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../migrations/006-world-memory.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../migrations/007-game-initialization.sql',import.meta.url),'utf8'));
   db = {query:(sql,values) => pg.query(sql,values),transaction:fn => pg.transaction(tx => fn({query:(sql,values) => tx.query(sql,values)}))};
   app = createApp(db,config);
   tokens = (await login(config.base,config,fetcher)).tokens;
@@ -22,9 +28,9 @@ before(async () => {
 });
 after(async () => {await client?.close(); await pg?.close();});
 
-test('official SDK initializes, discovers three tools and correct annotations',async () => {
+test('official SDK discovers legacy tools and event history tools with correct annotations',async () => {
   const listed = await client.listTools();
-  assert.equal(listed.tools.length,3);
+  assert.deepEqual(listed.tools.map(t => t.name),['get_gm_status','record_life_event','list_life_events','update_life_events','get_life_event','get_game_context','list_gm_adjudications','apply_gm_update','get_gm_update']);
   const write = listed.tools.find(t => t.name === 'record_life_event');
   assert.equal(write.annotations.readOnlyHint,false);
   assert.equal(write.annotations.idempotentHint,true);
