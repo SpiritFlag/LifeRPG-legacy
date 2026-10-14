@@ -82,7 +82,12 @@ export async function oauthRoute(db, config, request) {
     await db.query('DELETE FROM oauth_grants WHERE expires_at < now()');
     await db.query("DELETE FROM auth_attempts WHERE bucket < now() - interval '1 day'");
     await putGrant(db, 'login', hash(ticket), payload, 300);
-    return new Response(`<!doctype html><html lang="ko"><meta charset="utf-8"><title>LifeRPG 연결</title><h1>LifeRPG 실험 연결</h1><p>ChatGPT에 현실 사건 조회·기록 권한을 부여합니다. 본인이 시작한 연결인지 확인하세요.</p><p>서버를 준비할 때 생성된 소유자 연결 키를 입력하세요. 이 키를 대화에 붙여넣지 마세요.</p><form method="post" action="/oauth/authorize"><input type="hidden" name="ticket" value="${ticket}"><label>소유자 연결 키 <input type="password" name="owner_key" autocomplete="off" required></label><button type="submit">연결 승인</button></form></html>`, {headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Content-Security-Policy':"default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",'Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'}});
+    // no-referrer makes a browser navigation POST send Origin:null. Preserve the
+    // origin for CSRF validation while withholding the authorization URL/query.
+    // Chromium also checks form-action against the 303 redirect destination.
+    // This origin comes only from the exact, already-validated redirect allowlist.
+    const callbackOrigin = new URL(payload.redirect_uri).origin;
+    return new Response(`<!doctype html><html lang="ko"><meta charset="utf-8"><title>LifeRPG 연결</title><h1>LifeRPG 실험 연결</h1><p>ChatGPT에 현실 사건 조회·기록 권한을 부여합니다. 본인이 시작한 연결인지 확인하세요.</p><p>서버를 준비할 때 생성된 소유자 연결 키를 입력하세요. 이 키를 대화에 붙여넣지 마세요.</p><form method="post" action="/oauth/authorize"><input type="hidden" name="ticket" value="${ticket}"><label>소유자 연결 키 <input type="password" name="owner_key" autocomplete="off" required></label><button type="submit">연결 승인</button></form></html>`, {headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Content-Security-Policy':`default-src 'none'; form-action 'self' ${callbackOrigin}; frame-ancestors 'none'; base-uri 'none'`,'Referrer-Policy':'strict-origin','X-Content-Type-Options':'nosniff'}});
   }
   if (request.method === 'POST' && path === '/oauth/authorize') {
     if (request.headers.get('origin') !== config.base) throw new HttpError(403, 'invalid_origin');

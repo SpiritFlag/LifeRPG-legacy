@@ -42,5 +42,6 @@ GPT가 동일 사건에 **같은 표준 키**를 사용하면 중복 방지가 �
 
 - `npm run check`: JavaScript에 대한 TypeScript 정적 검사.
 - `npm test`: PGlite(Postgres) 기반, 공식 MCP client 연결과 실제 HTTP 메시지 검증. 인증, scope, audience, PKCE, replay, refresh, revoke, 중복, skip, 입력 오류, 감사 로그, rollback 포함.
+- `npm run test:browser`: 설치된 Edge 또는 `BROWSER_EXECUTABLE_PATH`의 Chromium으로 로그인 페이지에서 승인 버튼을 실제 클릭하고 Origin 전달·303 callback·토큰 교환을 검증한다. Postgres는 별도 메모리 DB이고 ChatGPT callback은 브라우저에서 가로채 외부 계정에 접근하지 않는다. 로그인 페이지는 `strict-origin` 정책으로 URL/query를 노출하지 않으면서 form POST의 Origin을 보존한다. 원본·null·미지정·타 도메인의 Origin 검사를 느슨하게 하지 않는다.
 - `npm run smoke`: 지정한 서버에 공식 MCP SDK로 연결. 실제 Postgres에서 합성 사건을 동시 등록해 1건 생성·1건 duplicate, 조회·audit·joke skip·미인증 쓰기 차단 확인. 매 실행 합성 사건 한 건이 남는다. 정상 완료 후 테스트 토큰을 폐기한다.
 - ChatGPT 연결·도구 표시·프로젝트 내 도구 사용·자율 감지·확인창 여부·의미 중복·농담 판별은 [연결 및 실험 안내](docs/CHATGPT-TEST.md)에서 사용자 관찰로 판정한다. 서버 테스트만으로 통과 판정하지 않는다.

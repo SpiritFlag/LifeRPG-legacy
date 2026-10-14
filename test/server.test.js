@@ -60,6 +60,8 @@ test('PKCE, code replay, exact redirects, resource and owner login are enforced'
   const ticket = /name="ticket" value="([A-Za-z0-9_-]+)"/.exec(html)[1];
   assert.equal((await form('/oauth/authorize',{ticket,owner_key:'wrong'},{Origin:config.base})).status,401);
   assert.equal((await form('/oauth/authorize',{ticket,owner_key:config.ownerKey},{Origin:'https://evil.example'})).status,403);
+  assert.equal((await form('/oauth/authorize',{ticket,owner_key:config.ownerKey},{Origin:'null'})).status,403);
+  assert.equal((await form('/oauth/authorize',{ticket,owner_key:config.ownerKey})).status,403);
   const granted = await form('/oauth/authorize',{ticket,owner_key:config.ownerKey},{Origin:config.base});
   const code = new URL(granted.headers.get('location')).searchParams.get('code');
   assert.equal((await form('/oauth/token',{...tokenParams,code,code_verifier:'y'.repeat(43)})).status,400);
