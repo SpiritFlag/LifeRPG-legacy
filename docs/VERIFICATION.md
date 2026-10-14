@@ -12,8 +12,15 @@
 | 동시 중복 | 실제 DB에 같은 합성 사건 동시 2회 등록 | recorded 1회, duplicate 1회, event ID 동일 |
 | 미인증 쓰기 | 실제 HTTP POST | 401, 기록 없음 |
 | 농담 분류 입력 | kind=joke 도구 호출 | skipped, 사건 수 변화 없음 |
+| Vercel production | CLI 배포 및 inspect | READY, Node.js 24, API Function sin1 |
+| 원격 Vercel→Neon | 공개 production URL에 SDK smoke | OAuth→MCP→DB 등록·조회·감사 로그 통과 |
+| 원격 동시 중복·미인증·skip | 원격 SDK smoke | 한 건 저장, duplicate 같은 ID, 미인증 401, joke skipped |
+| 원격 OAuth discovery | 공개 HTTP GET | issuer/resource/scopes/PKCE/refresh metadata 200 |
+| 비밀/소스 파일 제공 차단 | 배포 URL의 /.env.local, /src/config.js | 둘 다 404 |
 
 실제 DB smoke 합성 사건 ID: `5bd2b63a-8f34-496c-ad80-ac5f33073de9`. 실사용자 현실 사건이 아니다. 테스트 access/refresh token은 정상 종료 후 폐기했다. 자동 테스트는 별도 메모리 DB에서만 실행했다.
+
+원격 smoke 합성 사건 ID: `6abd95c8-adff-423d-a95e-307a8474b28d`. 합성 사건만 전용 DB에 저장했고 테스트 토큰을 폐기했다. 원격 MCP URL: `https://liferpg-mcp-experiment.vercel.app/mcp`. 배포 ID `dpl_GWYzPrMFoJ43XNrRn5gWLmSTjMLT`, 배포 source commit `f3b9ab5`.
 
 자동 테스트 범위: 공개 discovery·OAuth metadata·도구 annotation, 익명/위조/만료 토큰, scope·audience 제한, 정확한 redirect, S256 요구·틀린 PKCE, code/refresh 재사용 방지, refresh 회전·토큰 폐기, canonical key 중복과 원본 보존, 가상 사건 skip, 입력 제한과 비밀 필드 미기록, 페이지 나눔·감사 로그, 감사 기록 실패 때 사건 rollback, origin·body 크기·JSON 검증.
 
@@ -21,8 +28,6 @@
 
 | 항목 | 상태 |
 | --- | --- |
-| Vercel production 배포 및 원격 URL | 승인 확인 후 진행 예정 |
-| 원격 Vercel→Neon smoke | 배포 전, 미검증 |
 | 계정의 ChatGPT MCP 연결·쓰기 도구 사용 가능 여부 | 사용자 계정 UI에서 미검증 |
 | ‘수다방’ 프로젝트 내 MCP 사용 | 미검증 |
 | 명시적 ChatGPT 상태 조회 및 테스트 쓰기 | 미검증 |

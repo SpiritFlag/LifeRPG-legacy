@@ -8,7 +8,14 @@
 - Vercel CLI에서 기존 팀 `jeong-sin-gis-projects` (`team_wDLsRTkkRjvKKqQKnE8B9jEJ`), `plan=pro` 확인. 기존 프로젝트에는 LifeRPG가 없다.
 - 연결 URL·비밀값은 `.env.local`에 준비했다. `.gitignore`와 `.vercelignore`로 제외한다. README는 생성·수정하지 않았다.
 
-공개 저장소 푸시와 전용 Vercel 배포는 공개 범위 및 기존 Pro 팀 사용량에 대한 승인을 확인한 뒤 진행한다. DB는 무료 플랜에 만들었고 업그레이드하지 않았다. Vercel Pro 사용량에 따른 추가 비용은 무료라고 단정할 수 없다.
+공개 저장소 푸시와 전용 Vercel 배포는 2026-10-14 사용자 승인 후 완료했다. DB는 무료 플랜에 만들었고 업그레이드하지 않았다. Vercel Pro 사용량에 따른 추가 비용은 무료라고 단정할 수 없다.
+
+배포 project ID: `prj_v5gMi1veBor2Oa2DPmzHi9uJjHvk`.
+정식 MCP 연결 URL: **https://liferpg-mcp-experiment.vercel.app/mcp**.
+추가 production alias: `https://liferpg.spiritflag.work`. OAuth issuer/resource는 정식 연결 URL의 origin을 사용한다. ChatGPT 설정에서는 정식 URL을 그대로 사용한다.
+배포: `dpl_GWYzPrMFoJ43XNrRn5gWLmSTjMLT`, Node.js 24, Function `sin1`, 상태 READY. 공개 production endpoint에서 원격 smoke 통과. Deployment Protection 설정은 변경하지 않았다.
+
+사용자용 client secret·소유자 연결 키는 Git/배포에서 제외한 로컬 `.local/CHATGPT-CONNECTION.txt`에 제공한다. 실제 secret 값을 Git이나 대화에 붙여넣지 않는다.
 
 ## 배포 설정
 
@@ -17,10 +24,10 @@
 3. production 환경에 `DATABASE_URL`, `PUBLIC_BASE_URL`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OWNER_LOGIN_KEY`, `OAUTH_REDIRECT_URIS`를 설정한다. `DATABASE_DIRECT_URL`은 로컬 migration 전용이고 배포하지 않는다.
 4. `npm run check`, `npm test`를 실행하고 `vercel project inspect --non-interactive`로 owner/project를 재확인한다. Node.js 24, `sin1`, 최대 30초 Function, 프레임워크 없음.
 5. 승인된 범위에서 production 배포한다. ChatGPT가 MCP discovery와 OAuth endpoint에 접근할 수 있는 production URL이어야 한다. 기존 서비스의 Deployment Protection 설정을 변경하지 않는다. preview URL의 보호를 꺼서 우회하지 않는다.
-6. 원격 URL을 대상으로 `npm run smoke`를 실행한다. `.env.local`의 `PUBLIC_BASE_URL`을 확정된 production origin으로 변경한 뒤 새 local process에서 실행한다. 이 명령은 합성 사건 한 건과 호출 내역을 전용 DB에 추가한다.
+6. 원격 URL을 대상으로 `npm run smoke`를 실행한다. `PUBLIC_BASE_URL`을 확정된 production origin으로 환경에서 지정하면 `.env.local`의 localhost보다 우선한다. 이 명령은 합성 사건 한 건과 호출 내역을 전용 DB에 추가한다.
 7. [ChatGPT 테스트](CHATGPT-TEST.md)를 사용자와 진행한다. 서버 테스트 통과를 ChatGPT 자율 호출 성공으로 보고하지 않는다.
 
-CLI 사용 시 secret 값을 명령 인수나 console에 출력하지 않는다. stdin을 지원하는 env 설정이나 보안 파일을 이용한다. `.vercel`, `.env.local`, auth token, DB 비밀번호를 Git에 넣지 않는다. 공개 source에는 실제 사용자의 사건이나 로그도 넣지 않는다.
+CLI 사용 시 secret 값을 명령 인수나 console에 출력하지 않는다. stdin을 지원하는 env 설정이나 보안 파일을 이용한다. `.vercel`, `.env.local`, auth token, DB 비밀번호를 Git에 넣지 않는다. 공개 source에는 실제 사용자의 사건이나 로그도 넣지 않는다. 정적 파일 출력은 빈 `public/`로 제한하며 source 파일과 비밀 파일은 HTTP로 제공하지 않는다.
 
 ## 로컬 실행
 

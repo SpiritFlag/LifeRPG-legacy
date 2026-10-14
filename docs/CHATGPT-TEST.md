@@ -10,10 +10,10 @@
 
 ## 서버 연결
 
-1. 배포 후 제공되는 정확한 URL `https://<전용 도메인>/mcp`를 Server URL로 입력한다. 현재 배포 정보는 [검증 기록](VERIFICATION.md)에 남긴다.
-2. 이름 `Life RPG Experiment`, Authentication **OAuth**를 선택한다. 정적 자격증명 설정에 client ID `liferpg-chatgpt`와 `.env.local`의 `OAUTH_CLIENT_SECRET`을 입력한다. 비밀값을 대화나 저장소에 붙여넣지 않는다. 이 서버는 DCR/CIMD를 제공하지 않는다.
+1. Server URL에 **`https://liferpg-mcp-experiment.vercel.app/mcp`**를 입력한다. 현재 배포 정보는 [검증 기록](VERIFICATION.md)에 남긴다.
+2. 이름 `Life RPG Experiment`, Authentication **OAuth**를 선택한다. 정적 자격증명 설정에 client ID `liferpg-chatgpt`와 로컬 `.local/CHATGPT-CONNECTION.txt`의 Client secret을 입력한다. 원본 설정은 `.env.local`의 `OAUTH_CLIENT_SECRET`이다. 비밀값을 대화나 저장소에 붙여넣지 않는다. 이 서버는 DCR/CIMD를 제공하지 않는다.
 3. 설정 페이지가 표시하는 **정확한 redirect URI**를 서버의 `OAUTH_REDIRECT_URIS`와 비교한다. issuer 식별을 지원하는 현재 공식 경로의 예상값은 `https://chatgpt.com/connector_platform_oauth_redirect`다. 실제 표시값이 우선이며, 다르면 그 값만 allowlist에 추가하고 재배포한다. 임의 wildcard를 허용하지 않는다.
-4. OAuth 페이지가 열리면 `.env.local`의 `OWNER_LOGIN_KEY`를 입력하여 연결을 승인한다. 요청 scope는 `life.read life.write offline_access`; metadata에 refresh 지원을 광고한다.
+4. OAuth 페이지가 열리면 로컬 연결 안내의 소유자 연결 키(`OWNER_LOGIN_KEY`)를 입력하여 연결을 승인한다. 요청 scope는 `life.read life.write offline_access`; metadata에 refresh 지원을 광고한다.
 5. 경고를 검토하고 연결을 생성해 설치한다. 도구 설정에서 `get_gm_status`, `record_life_event`, `list_life_events`가 있는지 확인한다. 서버 변경 후에는 Refresh로 도구 정보를 갱신한다.
 6. 새 일반 대화에서 `@Life RPG Experiment`를 선택하고 상태 조회 → 명시적 테스트 쓰기 순서로 진행한다. 도구 입력/출력 JSON을 펼쳐 실제 호출 여부를 확인한다.
 7. ‘수다방’ 프로젝트에서도 동일한 도구를 사용할 수 있는지 확인하고 아래 지침을 추가한다. 앱 설치·프로젝트 지침만으로 모든 메시지에 도구가 자동 제공된다고 가정하지 않는다. 선택 여부가 다른 조건에서 일반 대화 실험을 각각 수행한다.
