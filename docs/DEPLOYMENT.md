@@ -13,7 +13,7 @@
 배포 project ID: `prj_v5gMi1veBor2Oa2DPmzHi9uJjHvk`.
 정식 MCP 연결 URL: **https://liferpg-mcp-experiment.vercel.app/mcp**.
 추가 production alias: `https://liferpg.spiritflag.work`. OAuth issuer/resource는 정식 연결 URL의 origin을 사용한다. ChatGPT 설정에서는 정식 URL을 그대로 사용한다.
-배포: `dpl_GWYzPrMFoJ43XNrRn5gWLmSTjMLT`, Node.js 24, Function `sin1`, 상태 READY. 공개 production endpoint에서 원격 smoke 통과. Deployment Protection 설정은 변경하지 않았다.
+현재 배포: `dpl_69r2CnH3RhtKk8ViESBtrvMcyKK7`, source commit `f2ab06c`, Node.js 24, Function `sin1`, 상태 READY. 최초 원격 smoke와 수정 후 원격 브라우저 OAuth 검증 통과. Deployment Protection 설정은 변경하지 않았다.
 
 사용자용 client secret·소유자 연결 키는 Git/배포에서 제외한 로컬 `.local/CHATGPT-CONNECTION.txt`에 제공한다. 실제 secret 값을 Git이나 대화에 붙여넣지 않는다.
 
