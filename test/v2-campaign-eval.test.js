@@ -8,6 +8,22 @@ import { MockGm } from '../src/v2/mock-gm.ts';
 import { proposal } from '../src/v2/contracts.ts';
 import { readOpenAiConfig,reservation } from '../src/v2/openai-config.ts';
 
+test('single birth allowance dispatches exactly once at 16384 and carries historical reservations',async()=>{
+  const dir=join(await mkdtemp(join(tmpdir(),'liferpg-single-birth-')),'evaluation');let calls=0;
+  const config=readOpenAiConfig({}),prior={calls:2,reserved_micro_usd:122880};
+  const transport=async(body,signal)=>{
+    calls++;assert.equal(body.max_output_tokens,16384);
+    const c=JSON.parse(body.input[0].content),p=proposal.parse((await new MockGm().generate(c,signal)).proposal);
+    return {status:200,body:{model:body.model,status:'completed',service_tier:'default',
+      usage:{input_tokens:100,output_tokens:100,total_tokens:200,input_tokens_details:{cached_tokens:0},output_tokens_details:{reasoning_tokens:0}},
+      output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({...p,question:p.question??null})}]}]}};
+  };
+  const r=await runEvaluation({dir,config,prior,maximumNewCalls:1,transport});
+  assert.equal(calls,1);assert.equal(r.turns.length,1);assert.equal(r.jobs.length,1);assert.equal(r.turns[0].receipt.status,'committed');
+  assert.equal(r.cumulative_reserved_micro_usd,327680);assert.equal(r.unattempted_cases.length,4);assert.equal(r.usage.budget_limit,377120);
+  await assert.rejects(()=>runEvaluation({dir,config,prior,maximumNewCalls:1,transport}));assert.equal(calls,1);
+});
+
 test('new output cap cannot silently inherit or expand the historical $0.50 approval',async()=>{
   const config=readOpenAiConfig({}),prior={calls:2,reserved_micro_usd:122880};
   const entries=[],guard=new DispatchGuard(reservation(config),async e=>entries.push(e),prior);

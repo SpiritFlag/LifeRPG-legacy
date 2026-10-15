@@ -72,14 +72,16 @@ export class DispatchGuard {
   }
 }
 
-export async function runEvaluation({dir,config,transport,mode='offline',metadata={},prior={calls:0,reserved_micro_usd:0},onCreated=()=>{},verifyFrozen=async()=>{}}) {
+export async function runEvaluation({dir,config,transport,mode='offline',metadata={},prior={calls:0,reserved_micro_usd:0},maximumNewCalls=CAP.calls-prior.calls,onCreated=()=>{},verifyFrozen=async()=>{}}) {
   const guard=new DispatchGuard(reservation(config),entry=>appendFile(join(dir,'dispatch.jsonl'),JSON.stringify(entry)+'\n',{flush:true}),prior);
-  if(config.model!=='gpt-6.1-sol'||config.reasoning!=='medium'||prior.reserved_micro_usd+reservation(config)*(CAP.calls-prior.calls)>CAP.reserved_micro_usd)throw new Error('Evaluation configuration outside approval');
+  if(!Number.isSafeInteger(maximumNewCalls)||maximumNewCalls<1||maximumNewCalls>CAP.calls-prior.calls||
+    config.model!=='gpt-6.1-sol'||config.reasoning!=='medium'||prior.reserved_micro_usd+reservation(config)*maximumNewCalls>CAP.reserved_micro_usd)throw new Error('Evaluation configuration outside approval');
   await mkdir(dir); // Exclusive new directory: rerunning cannot reset a previous ledger.
   onCreated();
-  await json(join(dir,'plan.json'),{mode,config,cases:CASES,cap:CAP,prior,per_call_reservation:reservation(config),metadata,created_at:new Date().toISOString()});
+  await json(join(dir,'plan.json'),{mode,config,cases:CASES,cap:CAP,prior,maximum_new_calls:maximumNewCalls,per_call_reservation:reservation(config),metadata,created_at:new Date().toISOString()});
   const samples=[],turns=[];let current=null,report;
   const bounded=new OpenAiGm(config,async(body,signal)=>{
+    if(guard.calls-prior.calls>=maximumNewCalls)throw new Error('New request allowance exhausted');
     await verifyFrozen();
     const context=JSON.parse(body.input[0].content);
     await json(join(dir,`context-${current}.json`),context);
@@ -109,7 +111,7 @@ export async function runEvaluation({dir,config,transport,mode='offline',metadat
     const worker=new GmWorker(db,gm,{leaseMs:30000,timeoutMs:120000});
     try {
       for(const [index,item] of CASES.entries()) {
-        if(!guard.available())break; // Stop before queueing a case that cannot be dispatched.
+        if(guard.calls-prior.calls>=maximumNewCalls||!guard.available())break; // Stop before queueing a case that cannot be dispatched.
         current=index+1;const started=performance.now();
         const queued=await service.execute(item.tool,item.input,identity);
         if(queued.status==='queued')await worker.runOnce(); // Never dispatch a retry, even if worker queued one.
@@ -122,7 +124,7 @@ export async function runEvaluation({dir,config,transport,mode='offline',metadat
       }
     } finally {
       const attempts=(await db.query('SELECT id,job_id,state,reserved_cost,actual_cost,model,input_tokens,output_tokens,usage_details,context_manifest,created_at,settled_at FROM attempts ORDER BY created_at')).rows;
-      report={mode,prior,api_calls:mode==='paid'?guard.calls-prior.calls:0,transport_calls:guard.calls-prior.calls,
+      report={mode,prior,maximum_new_calls:maximumNewCalls,api_calls:mode==='paid'?guard.calls-prior.calls:0,transport_calls:guard.calls-prior.calls,
         cumulative_api_calls:mode==='paid'?guard.calls:0,cumulative_reserved_micro_usd:guard.reserved,
         unattempted_cases:CASES.slice(turns.length).map((c,i)=>({case:turns.length+i+1,request_id:c.input.request_id})),
         cap:CAP,samples,turns,attempts,
