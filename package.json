@@ -7,9 +7,12 @@
     "node": "24.x"
   },
   "scripts": {
+    "dev:v2": "node --env-file-if-exists=.env.v2.local src/v2/local.ts",
+    "test:v2": "node --test --test-concurrency=1 test/v2.test.js test/v2-local.test.js",
+    "test:v2:postgres": "node --test test/v2-postgres.test.js",
     "dev": "node --env-file=.env.local src/dev.js",
     "check": "tsc --noEmit",
-    "test": "node --test --test-concurrency=1 test/server.test.js test/events.test.js test/growth.test.js test/quests.test.js test/content.test.js test/world.test.js test/initialization.test.js test/db-setup.test.js test/maintenance.test.js",
+    "test": "node --test --test-concurrency=1 test/server.test.js test/events.test.js test/growth.test.js test/quests.test.js test/content.test.js test/world.test.js test/initialization.test.js test/db-setup.test.js test/maintenance.test.js test/v2.test.js test/v2-local.test.js",
     "test:browser": "node --test test/oauth-browser.test.js",
     "test:initialization:browser": "npm run build && node --test test/initialization-browser.test.js",
     "db:setup": "node --env-file=.env.local scripts/setup-db.js",

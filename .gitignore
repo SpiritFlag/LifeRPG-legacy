@@ -3,6 +3,7 @@ node_modules/
 .neon
 .env*
 !.env.example
+!.env.v2.example
 .local/
 coverage/
 *.log

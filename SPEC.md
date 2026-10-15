@@ -1,5 +1,13 @@
 # LifeRPG MCP 사건·성장·퀘스트·콘텐츠·세계·개인 웹사이트 명세
 
+## v2 기반 구현 · 2026-10-15
+
+승인된 v2의 1~2단계는 별도 TypeScript 모듈과 `liferpg_v2` 스키마에 구현했다. 현재는 로컬 mock GM 전용이며 실제 OpenAI 호출이나 운영 배포가 없다. 5개 MCP 도구, 영속 작업·lease/fencing·재시도, 원자적 판정, 삭제 가능한 출처 기반 기억과 복원 시 삭제 목록 재적용을 제공한다. 정확한 계약·실행법·검증 및 후속 범위는 [V2-FOUNDATION.md](docs/V2-FOUNDATION.md)를 따른다. 기존 Vercel entry와 웹사이트는 v1을 사용하며 v2에 연결하지 않았다.
+
+## v1 구현 명세와 기존 검증 이력
+
+아래 설명은 기존 v1 코드와 당시 운영 기록이다. v2의 GM 역할이나 데이터 모델을 설명하지 않는다.
+
 ChatGPT가 유일한 GM 역할을 한다. 서버는 현실 사건·GM 판정·연속 퀘스트·캐릭터 콘텐츠·세계/NPC/역사/기억/일지의 저장·조회, 참조·상태 검증, 고정 레벨과 스탯 보정 계산을 수행하며 LLM을 호출하지 않는다. Phase 4의 개인 웹사이트는 Clerk 소유자 인증 뒤 공개 게임 상태를 읽기 전용으로 표시한다. Phase 5는 GM이 작성한 최초 캐릭터·세계를 초안으로 준비하고 한 번에 확정하는 계약을 제공한다. 일일 정산·예약 실행은 없다. 실제 사용자 세계나 캐릭터는 생성하지 않았다.
 
 로컬 코드에는 Phase 1 현실 사건, Phase 2 GM 판정·성장, Phase 3A 연속 퀘스트라인, Phase 3B 캐릭터 콘텐츠, Phase 3C 세계·NPC·GM 기억·일지·연대기, Phase 4 개인 웹사이트, Phase 5 정식 초기 생성이 구현되어 있다. Phase 6에서는 실제 Neon 격리 branch에서 001~007 이관·다중 연결·MVCC·timeout·재시도를 검증했다. 운영 서비스는 기존 실험 버전이며 운영 DB의 002~007 migration과 새 코드의 운영 배포는 실행하지 않았다. 전체 설계는 [DESIGN.md](DESIGN.md), 단계별 결과는 [1단계 검증](docs/PHASE1-VERIFICATION.md), [2단계 검증](docs/PHASE2-VERIFICATION.md), [Phase 3A 검증](docs/PHASE3A-VERIFICATION.md), [Phase 3B 검증](docs/PHASE3B-VERIFICATION.md), [Phase 3C 검증](docs/PHASE3C-VERIFICATION.md), [Phase 4 검증](docs/PHASE4-VERIFICATION.md), [Phase 5 검증](docs/PHASE5-VERIFICATION.md), [Phase 6 검증](docs/PHASE6-VERIFICATION.md)을 따른다.

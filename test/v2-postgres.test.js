@@ -1,0 +1,100 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {createServer} from 'node:net';
+import {mkdir,mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
+import {resolve,join,sep} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {randomBytes,randomUUID} from 'node:crypto';
+import pg from 'pg';
+import {connectDatabase} from '../src/database.js';
+import {scopedDatabase} from '../src/v2/storage.ts';
+import {LifeRpgService} from '../src/v2/service.ts';
+import {GmWorker} from '../src/v2/worker.ts';
+import {MockGm} from '../src/v2/mock-gm.ts';
+import {V2_SCOPES} from '../src/v2/contracts.ts';
+
+async function command(file,args) {
+  return new Promise((accept,reject)=>{
+    const child=spawn(file,args,{windowsHide:true,stdio:['ignore','pipe','pipe']});
+    let output='';child.stdout.on('data',chunk=>output+=chunk);child.stderr.on('data',chunk=>output+=chunk);
+    child.on('error',reject);child.on('exit',code=>{
+      // pg_ctl's server child can inherit pipe handles on Windows; wait for exit, not pipe EOF.
+      child.stdout.destroy();child.stderr.destroy();
+      code===0?accept(output):reject(new Error(`Local PostgreSQL command failed (${code}): ${output}`));
+    });
+  });
+}
+async function unusedPort() {
+  const socket=createServer();await new Promise(resolve=>socket.listen(0,'127.0.0.1',resolve));
+  const port=socket.address().port;await new Promise(resolve=>socket.close(resolve));return port;
+}
+
+test('real local PostgreSQL: independent connections, locks, lease recovery and deletion races',async t=>{
+  // Explicit local test binaries only. No env file, DATABASE_URL, production endpoint or external DB.
+  const getBinaries=(await import(pathToFileURL(resolve('.local/pg-runtime/node_modules/embedded-postgres/dist/binary.js')).href)).default;
+  const binaries=await getBinaries();
+  const root=resolve('.local/pg-verification');await mkdir(root,{recursive:true});
+  const run=await mkdtemp(join(root,'run-'));
+  const data=join(run,'data'),password=randomBytes(24).toString('hex'),passwordFile=join(run,'password');
+  const port=await unusedPort();
+  let started=false,rawA,rawB;
+  try {
+    await writeFile(passwordFile,password,{mode:0o600});
+    await command(binaries.initdb,['-D',data,'-U','v2test','--pwfile',passwordFile,'--auth=scram-sha-256','--encoding=UTF8','--locale=C']);
+    await rm(passwordFile);
+    await command(binaries.pg_ctl,['-D',data,'-l',join(run,'postgres.log'),'-o',`-h 127.0.0.1 -p ${port}`,'-w','start']);started=true;
+    const admin=new pg.Client({host:'127.0.0.1',port,user:'v2test',password,database:'postgres'});
+    await admin.connect();
+    try {await admin.query('CREATE DATABASE liferpg_v2_test');} finally {await admin.end();}
+    const url=`postgresql://v2test:${password}@127.0.0.1:${port}/liferpg_v2_test`;
+    const migration=new pg.Client({connectionString:url});await migration.connect();
+    try {await migration.query(await readFile(new URL('../migrations/v2/001-foundation.sql',import.meta.url),'utf8'));}
+    finally {await migration.end();}
+    rawA=connectDatabase(url);rawB=connectDatabase(url);
+    const a=scopedDatabase(rawA),b=scopedDatabase(rawB);
+    const serviceA=new LifeRpgService(a),serviceB=new LifeRpgService(b),identity={subject:randomUUID(),scopes:V2_SCOPES};
+    const workerA=new GmWorker(a,new MockGm()),workerB=new GmWorker(b,new MockGm());
+    const call=(name,input)=>serviceA.execute(name,input,identity);
+    await call('interact_with_gm',{request_id:randomUUID(),kind:'start',message:'Synthetic local PostgreSQL'});await workerA.runOnce();
+    let event;
+    await t.test('twenty concurrent deliveries share one request and one event',async()=>{
+      const input={request_id:randomUUID(),summary:'synthetic concurrent observation'};
+      const replies=await Promise.all(Array.from({length:20},(_,i)=>(i%2?serviceA:serviceB).execute('submit_observation',input,identity)));
+      assert.equal(new Set(replies.map(r=>r.operation_id)).size,1);event=replies[0];
+      assert.equal((await a.query('SELECT count(*)::integer AS n FROM events')).rows[0].n,1);
+    });
+    await t.test('only one worker owns the game; expired owner cannot commit',async()=>{
+      const claims=await Promise.all([workerA.claim(),workerB.claim()]);assert.equal(claims.filter(Boolean).length,1);
+      const old=claims.find(Boolean);
+      await a.query("UPDATE jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1",[old.jobId]);
+      const fresh=await workerB.claim();assert.ok(fresh.fencing>old.fencing);
+      const gm=new MockGm(),signal=new AbortController().signal;
+      const result=await Promise.all([workerA.complete(old,await gm.generate(old.context,signal)),workerB.complete(fresh,await gm.generate(fresh.context,signal))]);
+      assert.equal(result[0].status,'discarded');
+      assert.equal((await call('read_liferpg',{view:'game'})).xp,5);
+    });
+    await t.test('deletion racing an in-flight world job never leaves identifiable payloads',async()=>{
+      const action=await call('interact_with_gm',{request_id:randomUUID(),kind:'action',message:'synthetic action'});
+      const claim=await workerA.claim();assert.ok(claim.roots.includes(event.event_ids[0]));
+      await Promise.all([
+        serviceB.execute('delete_real_record',{request_id:randomUUID(),event_ids:event.event_ids},identity),
+        workerA.complete(claim,{proposal:{outcome:'commit',summary:'synthetic concurrent observation',xp_delta:0,memories:[{kind:'reflection',text:'synthetic concurrent observation'}]},usage:{cost:0,input_tokens:0,output_tokens:0}}),
+      ]);
+      assert.equal((await call('read_liferpg',{view:'request',operation_id:action.operation_id})).status,'deleted');
+      assert.equal((await a.query("SELECT 1 FROM payloads WHERE body::text LIKE '%synthetic concurrent observation%'" )).rows.length,0);
+      assert.equal((await a.query('SELECT 1 FROM events WHERE deleted_at IS NULL')).rows.length,0);
+    });
+    await t.test('owner-scoped foreign keys reject cross-owner payload references',async()=>{
+      const other=randomUUID();await a.query('INSERT INTO games(owner_id) VALUES($1)',[other]);
+      const payload=(await a.query('SELECT id FROM payloads WHERE owner_id=$1 LIMIT 1',[identity.subject])).rows[0].id;
+      await assert.rejects(()=>a.query("INSERT INTO memories(id,owner_id,kind,payload_id) VALUES($1,$2,'summary',$3)",[randomUUID(),other,payload]),e=>e.code==='23503');
+    });
+  } finally {
+    await rawA?.close();await rawB?.close();
+    if(started) await command(binaries.pg_ctl,['-D',data,'-m','fast','-w','stop']);
+    const target=resolve(run);
+    if(!target.startsWith(root+sep)) throw new Error('Unsafe PostgreSQL test cleanup');
+    await rm(target,{recursive:true,force:true});
+  }
+});

@@ -3,15 +3,15 @@ import { authenticate, challenge, HttpError, json, oauthRoute, readBody } from '
 import { createMcpServer } from './tools.js';
 import { maintenanceResponse } from './maintenance.js';
 
-/** @param {import('./database.js').Database} db @param {import('./config.js').Config} config */
-export function createApp(db, config) {
+/** @param {import('./database.js').Database} db @param {import('./config.js').Config} config @param {typeof createMcpServer} [serverFactory] */
+export function createApp(db, config, serverFactory = createMcpServer) {
   /** @param {Request} request */
   return async function handle(request) {
     try {
       const maintenance = maintenanceResponse(request, config.maintenanceWrites);
       if (maintenance) return maintenance;
       const path = new URL(request.url).pathname;
-      if (path === '/health' && request.method === 'GET') return json({server:'liferpg-mcp-experiment',status:'running'});
+      if (path === '/health' && request.method === 'GET') return json({server:config.serverName,status:'running'});
       const oauth = await oauthRoute(db,config,request);
       if (oauth) return oauth;
       if (path !== '/mcp') return json({error:'not_found'},404);
@@ -27,7 +27,7 @@ export function createApp(db, config) {
       const discovery = ['initialize','tools/list','notifications/initialized','ping'].includes(body?.method);
       const identity = discovery ? null : await authenticate(db,config,request);
       if (!discovery && !identity) return new Response(JSON.stringify({error:'unauthorized'}),{status:401,headers:{'Content-Type':'application/json','Cache-Control':'no-store','WWW-Authenticate':challenge(config)}});
-      const server = createMcpServer(db,config,identity);
+      const server = serverFactory(db,config,identity);
       const transport = new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});
       await server.connect(transport);
       try {

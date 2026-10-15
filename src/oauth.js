@@ -49,8 +49,8 @@ function validateAuthorization(params, config) {
   const redirect = params.get('redirect_uri') || '';
   if (params.get('client_id') !== config.clientId || !config.redirects.includes(redirect)) throw new HttpError(400, 'invalid_client_or_redirect');
   if (params.get('response_type') !== 'code' || params.get('code_challenge_method') !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(params.get('code_challenge') || '')) throw new HttpError(400, 'PKCE_S256_required');
-  const scopes = (params.get('scope') || 'life.read life.write').split(' ').filter(Boolean);
-  if (!scopes.length || scopes.some(s => !SCOPES.includes(s))) throw new HttpError(400, 'invalid_scope');
+  const scopes = (params.get('scope') || config.scopes.filter(s=>s!=='offline_access').join(' ')).split(' ').filter(Boolean);
+  if (!scopes.length || scopes.some(s => !config.scopes.includes(s))) throw new HttpError(400, 'invalid_scope');
   if (params.get('resource') !== config.resource) throw new HttpError(400, 'invalid_target');
   if ((params.get('state') || '').length > 1024) throw new HttpError(400, 'invalid_state');
   return {client_id:config.clientId, redirect_uri:redirect, challenge:params.get('code_challenge'), state:params.get('state'), scopes, resource:config.resource, subject:'experiment-owner'};
@@ -70,10 +70,10 @@ export async function oauthRoute(db, config, request) {
   const url = new URL(request.url);
   const path = url.pathname;
   if (request.method === 'GET' && ['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp'].includes(path)) {
-    return json({resource:config.resource, authorization_servers:[config.base], scopes_supported:SCOPES, bearer_methods_supported:['header'], resource_name:'LifeRPG experiment'});
+    return json({resource:config.resource, authorization_servers:[config.base], scopes_supported:config.scopes, bearer_methods_supported:['header'], resource_name:config.serverName});
   }
   if (request.method === 'GET' && path === '/.well-known/oauth-authorization-server') {
-    return json({issuer:config.base, authorization_endpoint:`${config.base}/oauth/authorize`, token_endpoint:`${config.base}/oauth/token`, revocation_endpoint:`${config.base}/oauth/revoke`, response_types_supported:['code'], grant_types_supported:['authorization_code','refresh_token'], token_endpoint_auth_methods_supported:['client_secret_post','client_secret_basic'], code_challenge_methods_supported:['S256'], scopes_supported:SCOPES, authorization_response_iss_parameter_supported:true});
+    return json({issuer:config.base, authorization_endpoint:`${config.base}/oauth/authorize`, token_endpoint:`${config.base}/oauth/token`, revocation_endpoint:`${config.base}/oauth/revoke`, response_types_supported:['code'], grant_types_supported:['authorization_code','refresh_token'], token_endpoint_auth_methods_supported:['client_secret_post','client_secret_basic'], code_challenge_methods_supported:['S256'], scopes_supported:config.scopes, authorization_response_iss_parameter_supported:true});
   }
   if (request.method === 'GET' && path === '/oauth/authorize') {
     const payload = validateAuthorization(url.searchParams, config);
@@ -87,7 +87,9 @@ export async function oauthRoute(db, config, request) {
     // Chromium also checks form-action against the 303 redirect destination.
     // This origin comes only from the exact, already-validated redirect allowlist.
     const callbackOrigin = new URL(payload.redirect_uri).origin;
-    return new Response(`<!doctype html><html lang="ko"><meta charset="utf-8"><title>LifeRPG 연결</title><h1>LifeRPG 실험 연결</h1><p>ChatGPT에 현실 사건 조회·기록 권한을 부여합니다. 본인이 시작한 연결인지 확인하세요.</p><p>서버를 준비할 때 생성된 소유자 연결 키를 입력하세요. 이 키를 대화에 붙여넣지 마세요.</p><form method="post" action="/oauth/authorize"><input type="hidden" name="ticket" value="${ticket}"><label>소유자 연결 키 <input type="password" name="owner_key" autocomplete="off" required></label><button type="submit">연결 승인</button></form></html>`, {headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Content-Security-Policy':`default-src 'none'; form-action 'self' ${callbackOrigin}; frame-ancestors 'none'; base-uri 'none'`,'Referrer-Policy':'strict-origin','X-Content-Type-Options':'nosniff'}});
+    const permissionNames = /** @type {Record<string,string>} */ ({'life.read':'현실 기록 조회','life.write':'현실 기록 작성·정정','life.delete':'현실 기록·파생 기억 삭제','game.read':'게임·처리 결과 조회','game.play':'GM 실행·게임 상태 변경','usage.read':'사용량 조회','offline_access':'연결 유지'});
+    const permissions=payload.scopes.map(scope=>permissionNames[scope] || '허용된 서비스 권한').join(' · ');
+    return new Response(`<!doctype html><html lang="ko"><meta charset="utf-8"><title>LifeRPG 연결</title><h1>LifeRPG 연결</h1><p>ChatGPT에 다음 권한을 부여합니다: ${permissions}. 본인이 시작한 연결인지 확인하세요.</p><p>서버를 준비할 때 생성된 소유자 연결 키를 입력하세요. 이 키를 대화에 붙여넣지 마세요.</p><form method="post" action="/oauth/authorize"><input type="hidden" name="ticket" value="${ticket}"><label>소유자 연결 키 <input type="password" name="owner_key" autocomplete="off" required></label><button type="submit">연결 승인</button></form></html>`, {headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Content-Security-Policy':`default-src 'none'; form-action 'self' ${callbackOrigin}; frame-ancestors 'none'; base-uri 'none'`,'Referrer-Policy':'strict-origin','X-Content-Type-Options':'nosniff'}});
   }
   if (request.method === 'POST' && path === '/oauth/authorize') {
     if (request.headers.get('origin') !== config.base) throw new HttpError(403, 'invalid_origin');

@@ -20,6 +20,6 @@ export function readConfig(env = process.env) {
     const url = new URL(redirect);
     if (url.username || url.password || url.hash || (url.protocol !== 'https:' && !(base.protocol === 'http:' && url.protocol === 'http:' && url.hostname === 'localhost'))) throw new Error('Invalid redirect URI');
   }
-  return { base: base.origin, resource: `${base.origin}/mcp`, clientId: env.OAUTH_CLIENT_ID || 'liferpg-chatgpt', clientSecret, ownerKey, redirects,allowSyntheticGame:env.ALLOW_SYNTHETIC_GAME === 'true',maintenanceWrites:env.MAINTENANCE_WRITES === 'true' };
+  return { base: base.origin, resource: `${base.origin}/mcp`, clientId: env.OAUTH_CLIENT_ID || 'liferpg-chatgpt', clientSecret, ownerKey, redirects,allowSyntheticGame:env.ALLOW_SYNTHETIC_GAME === 'true',maintenanceWrites:env.MAINTENANCE_WRITES === 'true',scopes:['life.read','life.write','offline_access'],serverName:'liferpg-mcp-experiment' };
 }
 /** @typedef {ReturnType<typeof readConfig>} Config */
