@@ -38,30 +38,31 @@ export type Claim={
 };
 
 export class GmWorker {
-  db:Database; gm:GmAdapter; leaseMs:number; timeoutMs:number;
+  db:Database; gm:GmAdapter; leaseMs:number; timeoutMs:number; inline=false;
   constructor(db:Database,gm:GmAdapter,options:{leaseMs?:number;timeoutMs?:number}={}) {
     if(!Number.isSafeInteger(gm.maxCost) || gm.maxCost<0) throw new Error('A bounded GM is required');
     this.db=db;this.gm=gm;this.leaseMs=options.leaseMs??30000;this.timeoutMs=options.timeoutMs??15000;
     if(this.leaseMs<20 || this.timeoutMs<1) throw new Error('Invalid worker timing');
   }
 
-  async claim():Promise<Claim|null> {
+  async claim(selectionTarget?:{owner:string;requestId:string}):Promise<Claim|null> {
     return this.db.transaction(async tx=>{
       // Lock game first everywhere. SKIP LOCKED lets another worker handle another owner.
-      const game=(await tx.query(`SELECT g.* FROM games g WHERE EXISTS(SELECT 1 FROM jobs j WHERE j.owner_id=g.owner_id
+      const game=selectionTarget ? (await tx.query(`SELECT g.* FROM games g WHERE owner_id=$1 FOR UPDATE`,[selectionTarget.owner])).rows[0] : (await tx.query(`SELECT g.* FROM games g WHERE EXISTS(SELECT 1 FROM jobs j WHERE j.owner_id=g.owner_id
         AND ((j.state='queued' AND j.available_at<=clock_timestamp()) OR (j.state='running' AND j.lease_until<=clock_timestamp())))
         AND NOT EXISTS(SELECT 1 FROM jobs j WHERE j.owner_id=g.owner_id AND j.state='running' AND j.lease_until>clock_timestamp())
         ORDER BY g.owner_id LIMIT 1 FOR UPDATE SKIP LOCKED`)).rows[0];
       if(!game) return null;
       const owner=game.owner_id;
-      const expired=(await tx.query(`UPDATE jobs SET state=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,
+      if(selectionTarget && (await tx.query("SELECT 1 FROM jobs WHERE owner_id=$1 AND state='running'",[owner])).rows.length)return null;
+      const expired=selectionTarget?[]:(await tx.query(`UPDATE jobs SET state=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,
         fencing=fencing+1,lease_until=NULL WHERE owner_id=$1 AND state='running' AND lease_until<=clock_timestamp() RETURNING id,request_id,state`,[owner])).rows;
       for(const j of expired) {
         await tx.query("UPDATE attempts SET state='unknown' WHERE job_id=$1 AND state='reserved'",[j.id]);
         await tx.query('UPDATE requests SET status=$2,error_code=$3 WHERE id=$1',[j.request_id,j.state==='failed'?'failed':'retryable_error','worker_lease_expired']);
       }
       const job=(await tx.query(`SELECT j.*,r.kind,r.input_payload,r.event_ids,r.reference_id,r.can_play FROM jobs j JOIN requests r ON r.id=j.request_id
-        WHERE j.owner_id=$1 AND j.state='queued' AND j.attempts<3 AND j.available_at<=clock_timestamp() ORDER BY j.available_at,j.id LIMIT 1 FOR UPDATE OF j`,[owner])).rows[0];
+        WHERE j.owner_id=$1 AND j.state='queued' AND j.attempts<3 AND j.available_at<=clock_timestamp() AND ($2::uuid IS NULL OR j.request_id=$2) ORDER BY j.available_at,j.id LIMIT 1 FOR UPDATE OF j`,[owner,selectionTarget?.requestId??null])).rows[0];
       if(!job) return null;
       const input=await loadPayload(tx,owner,job.input_payload);
       if(!input || !job.can_play) {
@@ -159,6 +160,11 @@ export class GmWorker {
     });
   }
   private async retry(tx:Queryable,c:Claim,code:string) {
+    if(this.inline) {
+      await tx.query("UPDATE jobs SET state='failed',lease_until=NULL WHERE id=$1 AND fencing=$2 AND state='running'",[c.jobId,c.fencing]);
+      await tx.query("UPDATE requests SET status='failed',error_code=$2 WHERE id=$1 AND status='running'",[c.requestId,code]);
+      return;
+    }
     const row=(await tx.query(`UPDATE jobs SET state=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,lease_until=NULL,
       available_at=clock_timestamp()+interval '100 milliseconds' WHERE id=$1 AND fencing=$2 AND state='running' RETURNING state`,[c.jobId,c.fencing])).rows[0];
     if(row) await tx.query('UPDATE requests SET status=$2,error_code=$3 WHERE id=$1',[c.requestId,row.state==='failed'?'failed':'retryable_error',code]);
@@ -255,7 +261,7 @@ export class GmWorker {
         if(eventId && !duplicate && c.context.kind!=='appeal') await tx.query('INSERT INTO reward_entitlements(owner_id,event_id,decision_id) VALUES($1,$2,$3)',[c.owner,eventId,decisionId]);
         await tx.query('UPDATE games SET revision=revision+1,xp=$2,initialized=initialized OR $3 WHERE owner_id=$1',[c.owner,nextXp.toString(),c.context.kind==='start']);
         await tx.query('UPDATE requests SET status=$2,result_payload=$3 WHERE id=$1',[c.requestId,duplicate||p.outcome==='no_change'?'no_change':'committed',payload]);
-        if(c.context.kind==='start') {
+        if(c.context.kind==='start' && !this.inline) {
           await tx.query("UPDATE jobs SET state='queued' WHERE owner_id=$1 AND state='blocked' AND request_id IN (SELECT id FROM requests WHERE owner_id=$1 AND error_code='start_required')",[c.owner]);
           await tx.query("UPDATE requests SET status='queued',error_code=NULL WHERE owner_id=$1 AND error_code='start_required'",[c.owner]);
         }

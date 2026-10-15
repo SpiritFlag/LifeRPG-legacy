@@ -1,5 +1,25 @@
 # 전용 Vercel 배포
 
+## v2 단일 함수 운영 전환 · 2026-10-15 13:58 KST
+
+현재 MCP production은 `dpl_EoSWwi2wK4LmFNqFh5EHHJHspYQF`이며 정식 URL은 **https://liferpg-mcp-experiment.vercel.app/mcp**다. 두 canonical host의 /health=200, server=liferpg-v2-openai, tools/list=기존 v2 도구 5개를 확인했다. 실제 OAuth 인증 뒤 read_liferpg의 status/game/usage가 정상 응답하고 initialized=false였다. 유료 GM 호출과 캐릭터 생성은 검증에서 수행하지 않았다.
+
+Vercel 진입점 api/server.ts는 Node.js에서 실행하며 maxDuration=300이다. TypeScript 진입점과 rewriteRelativeImportExtensions 설정으로 Vercel이 변환한 v2 모듈을 올바르게 로드한다. OpenAI 키와 기존 GM_MODEL/GM_REASONING_EFFORT/입출력 상한을 Production 환경변수에 등록했다. Neon liferpg_experiment의 새 liferpg_v2 스키마에 001~005 migration을 적용했다. 기존 v1 데이터와 유료 합성 자료를 이관하지 않았다. 서버 lifetime/UTC 일/UTC 월/owner 상한은 각각 $10이다. 월별 사용량은 기존 계산을 따르며 최초 lifetime/owner 상한 도달 시 운영자가 판단하여 조정한다.
+
+MCP 도구 5개의 입력은 유지했다. 새 GM 요청만 단일 invocation에서 시작하고, 15초 후에는 operation_id/status=running을 정상 응답으로 반환한다. 동일 Promise의 GM 실행·Neon 저장은 waitUntil로 이어간다. 조회는 GM을 실행하지 않는다. 별도 Worker 서비스·Gate·Cron·큐·복구 시스템을 배포하지 않았다. 기존 jobs/attempts 테이블과 판정 엔진만 재사용한다. 구체적인 시간 기록과 실패 의미는 SPEC의 v2 운영 항목을 따른다.
+
+ChatGPT에서 연결하는 방법:
+
+1. 기존 LifeRPG 앱의 도구 목록을 새로고침하고 연결을 끊었다가 다시 인증한다. 기존 연결을 갱신할 수 없으면 같은 MCP URL로 앱을 다시 등록한다. 인증은 OAuth, client ID는 liferpg-chatgpt이고 기존 client secret을 사용한다.
+2. 새 권한 life.read/life.write/life.delete/game.read/game.play/usage.read/offline_access를 승인한다. 소유자 키는 OAuth 연결 화면에 입력한다. 기존 비밀값은 Git에서 제외한 .local/CHATGPT-CONNECTION.txt에 있다.
+3. 새 대화에서 앱을 선택하고 “LifeRPG v2를 시작해 줘. 캐릭터와 세계 생성은 서버 GM에게 맡기고, 처리 중이면 operation_id로 확정 결과를 조회해 줘.”라고 요청한다. interact_with_gm(kind=start)가 첫 실제 유료 GM 호출이다.
+4. 이후 “오늘 실제로 30분 산책했어. 기록하고 게임 판정을 받아 줘.”처럼 확정된 사실을 전달한다. ChatGPT는 submit_observation을 사용한다. 허구 세계 행동은 interact_with_gm(kind=action), 추가 질문 답변은 kind=answer를 사용한다.
+5. running은 완료가 아니다. read_liferpg(view=request,operation_id=반환값)로 확정 결과를 확인한다. 재전송 시 같은 request_id를 유지한다. 실패한 요청을 새 ID로 반복 실행하기 전에 오류 원인을 확인한다.
+
+ChatGPT 프로젝트에 기존 v1 지침이 있으면 다음 문구로 교체한다: “너는 LifeRPG의 진행 창구다. 게임 판정은 서버 OpenAI GM에 맡긴다. 확정된 현실 사건만 submit_observation으로 전달한다. 매 요청에 고유 request_id를 쓰고 같은 요청의 재전송에는 같은 ID를 유지한다. running/queued를 완료로 말하지 않고 operation_id로 조회한다. committed/no_change/needs_input/failed를 구분하고 player_result.changes를 확정 결과로 전달한다. 서버가 질문하면 사용자의 답을 question_id와 함께 전달한다. 데이터 수정·삭제는 사용자의 요청에 따라 기존 전용 도구를 사용한다.”
+
+검증은 v2-inline 및 기존 서비스/OpenAI 계약 34개, tsc/웹 빌드, 배포 전용 URL의 v2 health, 정식 호스트의 도구 목록 및 실제 OAuth 읽기 경로에 한정했다. 배포 전용 URL의 /mcp와 /oauth는 기존 canonical-host WAF 규칙 때문에 차단되므로 정식 도메인에서 검증했다. 최초 staged 빌드의 TS 경로 누락은 정식 도메인 반영 전에 수정했다. 배포 검증 비공개 자료는 .local/v2-release/에 있다. 아래 항목은 v1 당시 이력이다.
+
 ## submit_observation 운영 반영 · 2026-10-15 09:44 KST
 
 사용자 승인으로 `submit_observation` 실험 도구를 production staged 빌드 후 promote했다. 현재 deployment는 `dpl_5Rnu3AXuMEoSbwVZnEy5jfEVw4cv`이며 READY/PROMOTED다. 이전 `dpl_6jfArqW1tNxAugbGpW6UJB1uVtpL` 업로드 원본과 대조한 39개 파일 중 실질 변경은 `src/tools.js`의 이번 실험 추가분 하나뿐이다. 로컬 미커밋 작업을 보존했고 Git push는 하지 않았다.

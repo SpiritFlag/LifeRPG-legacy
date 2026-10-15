@@ -107,9 +107,9 @@ export class OpenAiGm implements GmAdapter {
   }
 }
 
-/** The only live network boundary. Called only by the explicitly gated synthetic runner. */
-export function createLiveOpenAiGm(config:OpenAiConfig,env:NodeJS.ProcessEnv):OpenAiGm {
-  if(env.LIFERPG_ALLOW_PAID_SYNTHETIC!=='I_APPROVE_PAID_SYNTHETIC')throw new Error('Paid synthetic calls are disabled');
+/** Live network boundary. Production is explicitly selected by the Vercel entrypoint; synthetic callers retain their separate gate. */
+export function createLiveOpenAiGm(config:OpenAiConfig,env:NodeJS.ProcessEnv,production=false):OpenAiGm {
+  if(!production && env.LIFERPG_ALLOW_PAID_SYNTHETIC!=='I_APPROVE_PAID_SYNTHETIC')throw new Error('Paid synthetic calls are disabled');
   const key=env.OPENAI_API_KEY;
   if(!key || !key.trim())throw new Error('Set OPENAI_API_KEY in the server environment');
   return new OpenAiGm(config,async(body,signal)=>{

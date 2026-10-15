@@ -5,6 +5,6 @@ import type { Database } from './storage.ts';
 import type { Config } from '../config.js';
 
 /** db must be scopedDatabase(rawDb). There is no v1 writer in this app. */
-export function createV2App(db:Database,config:Config,afterDeletion?:()=>Promise<void>,mode:'mock'|'openai'='mock') {
-  return createApp(db,{...config,scopes:V2_SCOPES,serverName:`liferpg-v2-${mode}`},(database,settings,identity)=>createV2McpServer(database,settings,identity,afterDeletion,mode));
+export function createV2App(db:Database,config:Config,afterDeletion?:()=>Promise<void>,mode:'mock'|'openai'='mock',run?:Parameters<typeof createV2McpServer>[5]) {
+  return createApp(db,{...config,scopes:V2_SCOPES,serverName:`liferpg-v2-${mode}`},(database,settings,identity)=>createV2McpServer(database,settings,identity,afterDeletion,mode,run));
 }

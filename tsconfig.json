@@ -9,7 +9,13 @@
     "moduleResolution": "NodeNext",
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
-    "erasableSyntaxOnly": true
+    "erasableSyntaxOnly": true,
+    "rewriteRelativeImportExtensions": true
   },
-  "include": ["src/**/*.js", "src/**/*.ts", "api/**/*.js"]
+  "include": [
+    "src/**/*.js",
+    "src/**/*.ts",
+    "api/**/*.js",
+    "api/**/*.ts"
+  ]
 }

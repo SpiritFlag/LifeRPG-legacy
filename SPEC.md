@@ -1,10 +1,24 @@
 # LifeRPG MCP 사건·성장·퀘스트·콘텐츠·세계·개인 웹사이트 명세
 
+## v2 운영 실행 경로 · 2026-10-15
+
+Vercel MCP 진입점은 `api/server.ts`다. `createV2App` → 기존 5개 도구 → `LifeRpgService` → `inlineGm` 순서로 실행한다. 새로 접수한 GM 요청만 같은 함수에서 한 번 실행하며, 기존 jobs/attempts 테이블과 GM·게임 엔진을 재사용한다. 입력 계약은 변경하지 않았다.
+
+도구 접수 시각부터 최대 15초 동안 완료를 기다린다. 완료하면 canonical receipt를 같은 MCP 응답에 반환한다. 지연되면 정상 응답(isError=false)으로 operation_id/status=running/retry_after_ms를 반환한다. 실행과 Neon 저장을 포함한 동일 Promise를 응답 전에 Vercel waitUntil에 등록한다. 응답 타이머는 GM을 abort하지 않는다. read_liferpg(view=request,operation_id)는 저장 결과만 조회하고 GM을 실행하지 않는다. 중복 request_id도 추가 GM 호출을 만들지 않는다.
+
+운영 함수 최대 실행 시간은 300초, GM 호출의 별도 실행 상한은 270초다. 운영 경로는 만료 lease 회수·자동 재시도·heartbeat·drain loop를 실행하지 않는다. 기존 lease/fencing은 중복 실행과 수정·삭제 이후의 오래된 판정 반영을 막는 데만 사용한다. 다른 판정이 진행 중인 게임에 들어온 새 GM 요청은 game_busy로 실패한다. 실패 후 자동 복구는 없으며, 유실된 작업은 running에 남을 수 있다.
+
+005-inline-timing.sql은 attempts.gm_api_ms와 requests.finalized_at/total_ms를 추가한다. gm_api_ms는 어댑터 호출부터 응답 해석까지의 시간이고, total_ms는 requests.created_at(DB 접수)부터 최종 상태 저장까지의 시간이다. 확정 요청 조회의 timing에 두 값과 확정 시각을 반환한다. 판정 저장·과금 정산·RPG/기억·삭제 검증은 기존 구현을 따른다.
+
+운영 설정은 gpt-6.1-sol / medium / 입력·출력 각각 16,384토큰이다. 신규 v2 DB에는 월 $10 및 최초 서버 lifetime/소유자 누적 $10 한도를 적용했다. 일일 상한도 $10이며, 한도는 GM 도구가 수정하지 못한다. 합성 실행 승인 환경변수는 운영에 배포하지 않는다. 기존 mock/합성 실행기는 개발·검증용으로 남아 있고 운영에서 호출하지 않는다. v1 웹 화면은 v2 상태를 표시하지 않는다.
+
+직접 검증: v2-inline + 기존 v2 서비스/OpenAI 계약 34개 통과, TypeScript 및 웹 빌드 통과. 16초 모의 GM을 사용해 실제 15초 응답·동일 호출의 후속 저장·멱등성·조회·시간 기록·실패 처리를 검증했다. 유료 합성 캠페인은 실행하지 않았다.
+
 ## v2 기반·OpenAI·RPG·장기 기억 구현 · 2026-10-15
 
 승인된 v2의 1~2단계는 별도 TypeScript 모듈과 `liferpg_v2` 스키마에 구현했다. 5개 MCP 도구, 영속 작업·lease/fencing·재시도, 원자적 판정, 출처 기반 기억·삭제·복원은 [V2-FOUNDATION.md](docs/V2-FOUNDATION.md)를 따른다. 3단계에서는 `gpt-6.1-sol`/reasoning `medium`을 기본으로 Responses API + Structured Outputs adapter, 실제 응답 토큰 정산, 서버 전역 lifetime/UTC 일/월 예산을 구현했다. 설정과 승인 gate는 [V2-OPENAI.md](docs/V2-OPENAI.md), 승인된 첫 유료 합성 2회의 결과는 [실행 기록](docs/V2-OPENAI-FIRST-RUN.md)을 따른다.
 
-4단계는 자유로운 캐릭터·정의·보유/장착·퀘스트·세계/관계·공개 장면을 typed operations로 확정하는 RPG 실행기를 추가했다. 현실 접수 상태는 서버가 반환하고, GM은 게임 의미와 허구의 장면을 판정한다. 현재/과거 RPG payload의 출처 추적·삭제·허구 재해석, 공개/비공개 분리, 독립 세계 보상 중복 방지는 [V2-RPG.md](docs/V2-RPG.md)를 따른다. 이번 단계에서는 유료 API 호출·기존 유료 합성 DB 변경·운영 DB 변경·배포를 하지 않았다. 기존 `dev:v2`는 mock이고, Vercel entry와 웹사이트는 v1을 사용한다.
+4단계는 자유로운 캐릭터·정의·보유/장착·퀘스트·세계/관계·공개 장면을 typed operations로 확정하는 RPG 실행기를 추가했다. 현실 접수 상태는 서버가 반환하고, GM은 게임 의미와 허구의 장면을 판정한다. 현재/과거 RPG payload의 출처 추적·삭제·허구 재해석, 공개/비공개 분리, 독립 세계 보상 중복 방지는 [V2-RPG.md](docs/V2-RPG.md)를 따른다. 이번 단계에서는 유료 API 호출·기존 유료 합성 DB 변경·운영 DB 변경·배포를 하지 않았다. 당시 `dev:v2`와 Vercel entry/웹사이트는 각각 mock과 v1이었다. 현재 MCP 운영 경로는 위 v2 운영 항목을 따른다.
 
 5단계의 요청된 장기 기억 범위는 [V2-MEMORY.md](docs/V2-MEMORY.md)를 따른다. 관련 기억/세계 선택과 실제 요청 크기 검사, 원본 연결을 가진 요약, 정보 성격 구분, 성찰에 근거한 정체성 개정, 삭제 후 과거 정체성 자동 복원 금지를 구현했다. 출처 목록을 모델에 보낼 원문과 분리하며 기존 비용·공개 결과 계약은 유지한다. 1,000개 일화와 80턴 mock 캠페인으로 검증했다. 이번 단계 역시 새 유료 API 호출·기존 유료 합성 DB 변경·운영 DB 변경·배포·화면 개편은 하지 않았다.
 

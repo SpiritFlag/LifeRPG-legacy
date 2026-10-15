@@ -5,6 +5,7 @@ import { digest, lockGame, activeEvent, savePayload, loadPayload, payloadRoots, 
 import type { Database, Queryable } from './storage.ts';
 import { readRpg,publicRpg,effectiveStats } from './rpg.ts';
 
+export const FRESH_REQUEST=Symbol('fresh_request');
 const schemas={submit_observation:observation,interact_with_gm:interaction,revise_real_record:revision,delete_real_record:deletion,read_liferpg:read};
 export type ToolName=keyof typeof schemas;
 const writeScopes:Record<string,string[]>={submit_observation:['life.write','game.play'],interact_with_gm:['game.play'],revise_real_record:['life.write'],delete_real_record:['life.delete']};
@@ -15,11 +16,12 @@ export function scopesFor(tool:ToolName,input:{view?:string}):string[] {
 export async function requestResult(tx:Queryable,owner:string,id:string) {
   const row=(await tx.query('SELECT * FROM requests WHERE owner_id=$1 AND id=$2',[owner,id])).rows[0];
   if(!row) throw new DomainError('not_found');
+  const timing=row.total_ms==null?null:(await tx.query('SELECT a.gm_api_ms FROM attempts a JOIN jobs j ON j.id=a.job_id WHERE j.request_id=$1 ORDER BY a.created_at DESC LIMIT 1',[id])).rows[0];
   const result=await loadPayload(tx,owner,row.result_payload);
   const deletion=(await tx.query('SELECT live_status,backup_status,payload_count,privacy_epoch FROM deletions WHERE owner_id=$1 AND request_id=$2',[owner,id])).rows[0];
   const live=row.event_ids.length?(await tx.query('SELECT id FROM events WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND deleted_at IS NULL',[owner,row.event_ids])).rows.map(e=>e.id):[];
   return {operation_id:row.id,status:row.status,event_ids:row.status==='deleted'?[]:row.event_ids,
-    ...(result?result:{}),...(deletion?{deletion}:{}),...(row.error_code?{error_code:row.error_code}:{}),
+    ...(row.total_ms!=null?{timing:{total_ms:Number(row.total_ms),gm_api_ms:timing?.gm_api_ms==null?null:Number(timing.gm_api_ms),finalized_at:row.finalized_at}}:{}),...(result?result:{}),...(deletion?{deletion}:{}),...(row.error_code?{error_code:row.error_code}:{}),
     reality:{status:row.kind==='delete'||(row.event_ids.length&&!live.length)?'deleted':row.kind==='revise'?'corrected':live.length?'recorded':'not_applicable',event_ids:live},
     ...(['queued','running','retryable_error'].includes(row.status)?{retry_after_ms:1000}:{})};
 }
@@ -38,6 +40,7 @@ export class LifeRpgService {
     const input=parsed.data;
     if(scopesFor(tool,input as {view?:string}).some(s=>!identity.scopes.includes(s))) throw new DomainError('forbidden');
     if(tool==='read_liferpg') return this.read(read.parse(input),identity);
+    let fresh=false;
     const outcome=await this.db.transaction(async tx=>{
       const owner=identity.subject;
       const game=await lockGame(tx,owner);
@@ -53,6 +56,7 @@ export class LifeRpgService {
         if(!['deleted','invalidated'].includes(prior.status) && prior.input_hash!==hash) throw new DomainError('idempotency_conflict');
         return requestResult(tx,owner,prior.id);
       }
+      fresh=true;
       const id=randomUUID();
       let kind:string, status='queued', roots:string[]=[], reference:string|null=null;
       let eventIds:string[]|undefined;
@@ -135,6 +139,7 @@ export class LifeRpgService {
       return requestResult(tx,owner,id);
     });
     if(tool==='delete_real_record') await this.afterDeletion();
+    if(fresh)Object.defineProperty(outcome,FRESH_REQUEST,{value:true});
     return outcome;
   }
 
