@@ -27,7 +27,8 @@ export async function enqueue(tx:Queryable,owner:string,requestId:string) {
 export class LifeRpgService {
   db:Database;
   afterDeletion:()=>Promise<void>;
-  constructor(db:Database,afterDeletion:()=>Promise<void>=async()=>{}) { this.db=db;this.afterDeletion=afterDeletion; }
+  mode:'mock'|'openai';
+  constructor(db:Database,afterDeletion:()=>Promise<void>=async()=>{},mode:'mock'|'openai'='mock') { this.db=db;this.afterDeletion=afterDeletion;this.mode=mode; }
   async execute(tool:ToolName,raw:unknown,identity:Identity) {
     const parsed=schemas[tool]?.safeParse(raw);
     if(!parsed?.success) throw new DomainError('invalid_input');
@@ -149,7 +150,18 @@ export class LifeRpgService {
           COALESCE(sum(actual_cost),0)::text AS settled,
           COALESCE(sum(CASE WHEN state<>'completed' THEN reserved_cost ELSE 0 END),0)::text AS outstanding
           FROM attempts WHERE owner_id=$1 GROUP BY model`,[owner])).rows;
-        return {status:'ok',mode:'mock',unit:'synthetic_micro_usd',budget_limit:game?.budget_limit??0,models:rows};
+        if(this.mode==='openai') {
+          const usage=(await tx.query(`SELECT model,price_card,count(*)::integer AS calls,
+            COALESCE(sum(input_tokens),0)::text AS input_tokens,COALESCE(sum(output_tokens),0)::text AS output_tokens,
+            COALESCE(sum((usage_details->>'cached_tokens')::bigint),0)::text AS cached_tokens,
+            COALESCE(sum((usage_details->>'cache_write_tokens')::bigint),0)::text AS cache_write_tokens,
+            COALESCE(sum((usage_details->>'reasoning_tokens')::bigint),0)::text AS reasoning_tokens,
+            COALESCE(sum(actual_cost),0)::text AS settled,
+            COALESCE(sum(CASE WHEN state<>'completed' THEN reserved_cost ELSE 0 END),0)::text AS outstanding
+            FROM attempts WHERE owner_id=$1 AND provider='openai' GROUP BY model,price_card`,[owner])).rows;
+          return {status:'ok',mode:this.mode,unit:'micro_usd',cost_basis:'provider_usage_times_versioned_rates_estimate',budget_limit:game?.budget_limit??0,models:usage};
+        }
+        return {status:'ok',mode:this.mode,unit:'synthetic_micro_usd',budget_limit:game?.budget_limit??0,models:rows};
       }
       if(input.view==='records') {
         const rows=(await tx.query(`SELECT e.id,e.version,p.body FROM events e JOIN event_versions v ON v.event_id=e.id AND v.version=e.version
@@ -158,9 +170,9 @@ export class LifeRpgService {
           ORDER BY e.id LIMIT $4`,[owner,input.cursor??null,input.query??null,input.limit+1])).rows;
         return {status:'ok',records:rows.slice(0,input.limit),next_cursor:rows.length>input.limit?rows[input.limit-1].id:null};
       }
-      if(input.view==='game') return {status:'ok',mode:'mock',initialized:game?.initialized??false,revision:game?.revision??0,xp:Number(game?.xp??0),
+      if(input.view==='game') return {status:'ok',mode:this.mode,initialized:game?.initialized??false,revision:game?.revision??0,xp:Number(game?.xp??0),
         reinterpretation_pending:(await tx.query('SELECT count(*)::integer AS n FROM decisions WHERE owner_id=$1 AND needs_reinterpretation',[owner])).rows[0].n};
-      return {status:'ok',mode:'mock',initialized:game?.initialized??false,automatic_capture_paused:game?.auto_capture_paused??false,
+      return {status:'ok',mode:this.mode,initialized:game?.initialized??false,automatic_capture_paused:game?.auto_capture_paused??false,
         jobs:(await tx.query('SELECT state,count(*)::integer AS count FROM jobs WHERE owner_id=$1 GROUP BY state',[owner])).rows};
     });
   }

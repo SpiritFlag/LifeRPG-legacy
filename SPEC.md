@@ -1,8 +1,8 @@
 # LifeRPG MCP 사건·성장·퀘스트·콘텐츠·세계·개인 웹사이트 명세
 
-## v2 기반 구현 · 2026-10-15
+## v2 기반·OpenAI 연결 구현 · 2026-10-15
 
-승인된 v2의 1~2단계는 별도 TypeScript 모듈과 `liferpg_v2` 스키마에 구현했다. 현재는 로컬 mock GM 전용이며 실제 OpenAI 호출이나 운영 배포가 없다. 5개 MCP 도구, 영속 작업·lease/fencing·재시도, 원자적 판정, 삭제 가능한 출처 기반 기억과 복원 시 삭제 목록 재적용을 제공한다. 정확한 계약·실행법·검증 및 후속 범위는 [V2-FOUNDATION.md](docs/V2-FOUNDATION.md)를 따른다. 기존 Vercel entry와 웹사이트는 v1을 사용하며 v2에 연결하지 않았다.
+승인된 v2의 1~2단계는 별도 TypeScript 모듈과 `liferpg_v2` 스키마에 구현했다. 5개 MCP 도구, 영속 작업·lease/fencing·재시도, 원자적 판정, 출처 기반 기억·삭제·복원은 [V2-FOUNDATION.md](docs/V2-FOUNDATION.md)를 따른다. 3단계에서는 `gpt-6.1-sol`/reasoning `medium`을 기본으로 Responses API + Structured Outputs adapter, 실제 응답 토큰 정산, 서버 전역 lifetime/UTC 일/월 예산을 구현했다. 모델/단가/추론 설정, 유료 승인 gate, 합성 검증 및 첫 호출 절차는 [V2-OPENAI.md](docs/V2-OPENAI.md)를 따른다. 실제 유료 호출·운영 DB 변경·배포는 수행하지 않았다. 기존 `dev:v2`는 mock이고, Vercel entry와 웹사이트는 v1을 사용한다.
 
 ## v1 구현 명세와 기존 검증 이력
 

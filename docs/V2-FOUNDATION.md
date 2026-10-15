@@ -2,7 +2,7 @@
 
 2026-10-15 · 승인된 [v2 설계](DESIGN-V2.md)의 기반·통신·영속 작업·삭제 가능한 기억 구현.
 
-**현재 실행 모드는 mock 전용이다.** OpenAI SDK·API 호출·실제 모델 판정은 구현하지 않았고 운영 DB·배포를 변경하지 않았다. 기존 Vercel entry와 개인 웹은 v1을 유지한다. v2는 별도 로컬 entry와 `liferpg_v2` 스키마를 사용한다.
+**이 문서는 1~2단계 완료 당시의 mock 기반 명세다.** 이후 구현한 OpenAI adapter·예산·합성 테스트 절차는 [3단계 명세](V2-OPENAI.md)를 따른다. `dev:v2` 실행은 계속 mock이며 운영 DB·배포는 변경하지 않았다. 기존 Vercel entry와 개인 웹은 v1을 유지한다. v2는 별도 로컬 entry와 `liferpg_v2` 스키마를 사용한다.
 
 ## 1. 구현 범위
 

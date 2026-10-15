@@ -2,8 +2,8 @@ import { z } from 'zod';
 import { lockGame } from './storage.ts';
 import type { Database } from './storage.ts';
 
-/** Trusted operator boundary, not exposed to MCP or GM proposals. Synthetic units only. */
-export async function setMockBudget(db:Database,owner:string,value:unknown) {
+/** Trusted operator boundary, not exposed to MCP or GM proposals. Micro-USD for live GM. */
+export async function setOwnerBudget(db:Database,owner:string,value:unknown) {
   const limit=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(value);
   await db.transaction(async tx=>{
     await lockGame(tx,owner);
@@ -12,3 +12,5 @@ export async function setMockBudget(db:Database,owner:string,value:unknown) {
     await tx.query("UPDATE requests SET status='queued',error_code=NULL WHERE owner_id=$1 AND error_code='budget_exhausted'",[owner]);
   });
 }
+// Compatibility for existing mock tests/callers; their units remain synthetic.
+export const setMockBudget=setOwnerBudget;

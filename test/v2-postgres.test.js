@@ -13,6 +13,9 @@ import {LifeRpgService} from '../src/v2/service.ts';
 import {GmWorker} from '../src/v2/worker.ts';
 import {MockGm} from '../src/v2/mock-gm.ts';
 import {V2_SCOPES} from '../src/v2/contracts.ts';
+import {OpenAiGm} from '../src/v2/openai-gm.ts';
+import {readOpenAiConfig} from '../src/v2/openai-config.ts';
+import {configureBudget,budgetUsage} from '../src/v2/budget.ts';
 
 async function command(file,args) {
   return new Promise((accept,reject)=>{
@@ -49,7 +52,7 @@ test('real local PostgreSQL: independent connections, locks, lease recovery and 
     try {await admin.query('CREATE DATABASE liferpg_v2_test');} finally {await admin.end();}
     const url=`postgresql://v2test:${password}@127.0.0.1:${port}/liferpg_v2_test`;
     const migration=new pg.Client({connectionString:url});await migration.connect();
-    try {await migration.query(await readFile(new URL('../migrations/v2/001-foundation.sql',import.meta.url),'utf8'));}
+    try {for(const file of ['001-foundation.sql','002-openai-accounting.sql'])await migration.query(await readFile(new URL(`../migrations/v2/${file}`,import.meta.url),'utf8'));}
     finally {await migration.end();}
     rawA=connectDatabase(url);rawB=connectDatabase(url);
     const a=scopedDatabase(rawA),b=scopedDatabase(rawB);
@@ -89,6 +92,22 @@ test('real local PostgreSQL: independent connections, locks, lease recovery and 
       const other=randomUUID();await a.query('INSERT INTO games(owner_id) VALUES($1)',[other]);
       const payload=(await a.query('SELECT id FROM payloads WHERE owner_id=$1 LIMIT 1',[identity.subject])).rows[0].id;
       await assert.rejects(()=>a.query("INSERT INTO memories(id,owner_id,kind,payload_id) VALUES($1,$2,'summary',$3)",[randomUUID(),other,payload]),e=>e.code==='23503');
+    });
+    await t.test('two independent workers cannot overspend one shared OpenAI budget across owners',async()=>{
+      const config=readOpenAiConfig({});
+      const gm=new OpenAiGm(config,async()=>({status:200,body:{model:config.model,status:'completed',service_tier:'default',
+        usage:{input_tokens:100,output_tokens:20,total_tokens:120,input_tokens_details:{cached_tokens:0,cache_write_tokens:0},output_tokens_details:{reasoning_tokens:10}},
+        output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({outcome:'commit',summary:'합성 시작',xp_delta:0,question:null,memories:[]})}]}]}}));
+      await configureBudget(a,{lifetime:gm.maxCost,daily:gm.maxCost,monthly:gm.maxCost});
+      for(const service of [serviceA,serviceB])await service.execute('interact_with_gm',{request_id:randomUUID(),kind:'start',message:'synthetic budget race'},{subject:randomUUID(),scopes:V2_SCOPES});
+      const workers=[new GmWorker(a,gm),new GmWorker(b,gm)];
+      const claims=await Promise.all(workers.map(w=>w.claim()));
+      assert.equal(claims.filter(Boolean).length,1);
+      assert.equal((await a.transaction(budgetUsage)).lifetime,String(gm.maxCost));
+      const winner=claims.findIndex(Boolean),claim=claims[winner];
+      await workers[winner].complete(claim,await gm.generate(claim.context,new AbortController().signal));
+      assert.equal((await a.transaction(budgetUsage)).lifetime,'400');
+      assert.equal((await a.query("SELECT count(*)::int AS n FROM requests WHERE status='blocked_budget'")).rows[0].n,1);
     });
   } finally {
     await rawA?.close();await rawB?.close();

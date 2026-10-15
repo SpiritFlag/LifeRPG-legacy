@@ -2,15 +2,20 @@ import { randomUUID } from 'node:crypto';
 import { proposal, DomainError } from './contracts.ts';
 import { lockGame, loadPayload, payloadRoots, savePayload, activeEvent } from './storage.ts';
 import type { Database, Queryable } from './storage.ts';
+import { canReserve } from './budget.ts';
+import type { PriceCard } from './openai-config.ts';
 
 export type GmContext={
   operation_id:string; kind:string; input:Record<string,unknown>; initialized:boolean; xp:number;
   memories:{kind:string;body:unknown}[]; events:{id:string;version:number;body:unknown}[];
-  previous_decision:unknown;
+  previous_decision:unknown;target_event_id:string|null;
 };
-export type GmReply={proposal:unknown;usage:{input_tokens:number;output_tokens:number;cost:number}};
+export type GmUsage={input_tokens:number;output_tokens:number;cost:number|null;details?:{
+  cached_tokens:number;cache_write_tokens:number;reasoning_tokens:number;total_tokens:number;returned_model:string;service_tier:string;
+}};
+export type GmReply={proposal:unknown;usage?:GmUsage;failure?:{code:string;retryable:boolean}};
 export interface GmAdapter {
-  model:'mock-v2'; maxCost:number;
+  model:string; maxCost:number;provider?:'mock'|'openai';priceCard?:PriceCard;
   generate(context:GmContext,signal:AbortSignal):Promise<GmReply>;
 }
 export type Claim={
@@ -21,7 +26,7 @@ export type Claim={
 export class GmWorker {
   db:Database; gm:GmAdapter; leaseMs:number; timeoutMs:number;
   constructor(db:Database,gm:GmAdapter,options:{leaseMs?:number;timeoutMs?:number}={}) {
-    if(gm.model!=='mock-v2' || !Number.isSafeInteger(gm.maxCost) || gm.maxCost<0) throw new Error('Only bounded mock GM is enabled in phase 1-2');
+    if(!Number.isSafeInteger(gm.maxCost) || gm.maxCost<0) throw new Error('A bounded GM is required');
     this.db=db;this.gm=gm;this.leaseMs=options.leaseMs??30000;this.timeoutMs=options.timeoutMs??15000;
     if(this.leaseMs<20 || this.timeoutMs<1) throw new Error('Invalid worker timing');
   }
@@ -61,7 +66,8 @@ export class GmWorker {
         return null;
       }
       const budget=(await tx.query(`SELECT COALESCE(sum(CASE WHEN state='completed' THEN actual_cost ELSE reserved_cost END),0)::text AS used FROM attempts WHERE owner_id=$1`,[owner])).rows[0];
-      if(BigInt(budget.used)+BigInt(this.gm.maxCost)>BigInt(game.budget_limit)) {
+      if(BigInt(budget.used)+BigInt(this.gm.maxCost)>BigInt(game.budget_limit) ||
+        (this.gm.provider==='openai' && !await canReserve(tx,this.gm.maxCost))) {
         await tx.query("UPDATE jobs SET state='blocked' WHERE id=$1",[job.id]);
         await tx.query("UPDATE requests SET status='blocked_budget',error_code='budget_exhausted' WHERE id=$1",[job.request_id]);
         return null;
@@ -100,8 +106,9 @@ export class GmWorker {
       const eventVersions=events.map(({id,version})=>({id,version}));
       await tx.query(`INSERT INTO attempts(id,owner_id,job_id,fencing,state,reserved_cost,model,context_manifest)
         VALUES($1,$2,$3,$4,'reserved',$5,$6,$7)`,[attemptId,owner,job.id,fencing,this.gm.maxCost,this.gm.model,JSON.stringify({game_revision:game.revision,privacy_epoch:game.privacy_epoch,event_versions:eventVersions,payload_ids:payloadIds})]);
+      if(this.gm.provider==='openai')await tx.query("UPDATE attempts SET provider='openai',price_card=$2 WHERE id=$1",[attemptId,JSON.stringify(this.gm.priceCard)]);
       return {jobId:job.id,owner,requestId:job.request_id,attemptId,fencing,revision:game.revision,epoch:game.privacy_epoch,roots,eventVersions,
-        context:{operation_id:job.request_id,kind:job.kind,input,initialized:game.initialized,xp:Number(game.xp),memories:memories.map(({kind,body})=>({kind,body})),events,previous_decision:previous}};
+        context:{operation_id:job.request_id,kind:job.kind,input,initialized:game.initialized,xp:Number(game.xp),memories:memories.map(({kind,body})=>({kind,body})),events,previous_decision:previous,target_event_id:job.event_ids[0]??null}};
     });
   }
 
@@ -127,15 +134,39 @@ export class GmWorker {
     });
   }
 
-  async complete(c:Claim,reply:GmReply) {
+  private async settle(c:Claim,reply:GmReply) {
     return this.db.transaction(async tx=>{
-      const game=await lockGame(tx,c.owner);
+      await lockGame(tx,c.owner);
       const usage=reply.usage;
-      const usageValid=usage && [usage.cost,usage.input_tokens,usage.output_tokens].every(n=>Number.isSafeInteger(n)&&n>=0) && usage.cost<=this.gm.maxCost;
+      const usageValid=usage && usage.cost!==null && [usage.cost,usage.input_tokens,usage.output_tokens].every(n=>Number.isSafeInteger(n)&&n>=0);
+      // Keep true usage even if a provider exceeds the reservation or the content is rejected/deleted.
+      if(this.gm.provider==='openai') {
+        await tx.query('SELECT id FROM gm_budget WHERE id=true FOR UPDATE');
+        if(usage)await tx.query("UPDATE attempts SET input_tokens=$2,output_tokens=$3,usage_details=$4 WHERE id=$1 AND state<>'completed'",
+          [c.attemptId,usage.input_tokens,usage.output_tokens,JSON.stringify(usage.details??null)]);
+        if(usageValid)await tx.query("UPDATE attempts SET settled_at=clock_timestamp() WHERE id=$1 AND state<>'completed'",[c.attemptId]);
+      }
       if(usageValid) await tx.query("UPDATE attempts SET state='completed',actual_cost=$2,input_tokens=$3,output_tokens=$4 WHERE id=$1 AND state<>'completed'",[c.attemptId,usage.cost,usage.input_tokens,usage.output_tokens]);
       else await tx.query("UPDATE attempts SET state='unknown' WHERE id=$1 AND state='reserved'",[c.attemptId]);
+      return !!usageValid;
+    });
+  }
+
+  async complete(c:Claim,reply:GmReply) {
+    // Provider usage is independent of gameplay. A failing game commit must not erase a known bill.
+    const usageValid=await this.settle(c,reply);
+    return this.db.transaction(async tx=>{
+      const game=await lockGame(tx,c.owner);
       const job=(await tx.query("SELECT *,lease_until>clock_timestamp() AS live FROM jobs WHERE id=$1 AND owner_id=$2",[c.jobId,c.owner])).rows[0];
       if(!job || job.state!=='running' || job.fencing!==c.fencing || !job.live) return {status:'discarded'};
+      if(reply.failure) {
+        if(reply.failure.retryable)await this.retry(tx,c,reply.failure.code);
+        else {
+          await tx.query("UPDATE jobs SET state='failed',lease_until=NULL WHERE id=$1",[c.jobId]);
+          await tx.query("UPDATE requests SET status='failed',error_code=$2 WHERE id=$1",[c.requestId,reply.failure.code]);
+        }
+        return {status:'failed'};
+      }
       if(game.privacy_epoch!==c.epoch || game.revision!==c.revision) {
         await this.retry(tx,c,'context_changed');return {status:'retryable_error'};
       }
@@ -148,7 +179,7 @@ export class GmWorker {
       const p=parsed.data;
       const req=(await tx.query('SELECT * FROM requests WHERE id=$1 AND owner_id=$2',[c.requestId,c.owner])).rows[0];
       const eventId=req.event_ids[0]??null;
-      // Initial mock awards ONLY an event's base entitlement; world/start actions cannot mint life XP.
+      // Award only a target event's entitlement; context roots cannot mint life XP.
       if(p.xp_delta!==0 && !eventId) {await this.retry(tx,c,'invalid_reward_source');return {status:'retryable_error'};}
       if(p.outcome==='clarify') {
         const questionId=randomUUID();

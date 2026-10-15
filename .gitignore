@@ -4,6 +4,7 @@ node_modules/
 .env*
 !.env.example
 !.env.v2.example
+!.env.openai.example
 .local/
 coverage/
 *.log
