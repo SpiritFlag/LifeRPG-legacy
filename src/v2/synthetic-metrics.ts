@@ -8,6 +8,7 @@ export type SyntheticMeasurement={operation_id:string;kind:string;elapsed_ms:num
 /** Measure the actual transport boundary; receipts use operation_id, never an input request_id. */
 export function measureSyntheticGm(gm:OpenAiGm,emit:(sample:SyntheticMeasurement)=>void):GmAdapter {
   return {provider:gm.provider,model:gm.model,maxCost:gm.maxCost,priceCard:gm.priceCard,
+    fitsContext:context=>gm.fitsContext(context),
     async generate(context,signal) {
       const started=performance.now();let requests=0,status:number|null=null,httpMs:number|null=null,error:string|null=null;
       const measured=new OpenAiGm(gm.config,async(body,abort)=>{

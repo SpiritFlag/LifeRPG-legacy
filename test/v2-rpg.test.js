@@ -16,7 +16,7 @@ import {readOpenAiConfig} from '../src/v2/openai-config.ts';
 
 let pg,db;
 before(async()=>{
-  pg=new PGlite();for(const file of ['001-foundation.sql','002-openai-accounting.sql','003-rpg.sql'])await pg.exec(await readFile(new URL(`../migrations/v2/${file}`,import.meta.url),'utf8'));
+  pg=new PGlite();for(const file of ['001-foundation.sql','002-openai-accounting.sql','003-rpg.sql','004-memory.sql'])await pg.exec(await readFile(new URL(`../migrations/v2/${file}`,import.meta.url),'utf8'));
   db=scopedDatabase({query:(s,v)=>pg.query(s,v),transaction:fn=>pg.transaction(tx=>fn({query:(s,v)=>tx.query(s,v)}))});
 });
 beforeEach(()=>db.query('TRUNCATE games CASCADE'));
@@ -101,7 +101,7 @@ test('consumed quest rewards cannot be reissued under a new request key; entire 
 for(const [name,make,code] of [
   ['negative inventory',g=>[inventory(holding(g,entity(g,'item')).id,entity(g,'item').id,-99,holding(g,entity(g,'item')).version)],'rpg_inventory_balance'],
   ['stale version',g=>[put(entity(g,'npc').id,body(entity(g,'npc')),999)],'rpg_version_conflict'],
-  ['unknown ref',g=>[put(entity(g,'character').id,{...body(entity(g,'character')),location:randomUUID()},entity(g,'character').version)],'rpg_invalid_reference'],
+  ['unknown ref',g=>[put(entity(g,'character').id,{...body(entity(g,'character')),location:randomUUID()},entity(g,'character').version)],'rpg_context_missing'],
   ['private reference in public entity',g=>[put('@hidden',named('npc','secret',{parent:null}),0,{visibility:'private'}),put('@edge',named('relation','leak',{from:entity(g,'npc').id,to:'@hidden',status:'active'}))],'rpg_private_reference'],
   ['cycle in place hierarchy',()=>[put('@a',named('place','A',{parent:'@b'})),put('@b',named('place','B',{parent:'@a'}))],'rpg_parent_cycle'],
   ['quest skipping active state',g=>[put(entity(g,'quest').id,{...body(entity(g,'quest')),status:'completed',progress:2},entity(g,'quest').version)],'rpg_quest_transition'],
@@ -197,7 +197,7 @@ test('existing IDs belonging to another player cannot be referenced or overwritt
   const a=fixture(),b=fixture();await a.start();await b.start();
   const foreign=entity(await b.game(),'npc'),before=await b.game();
   const r=await a.execute(proposal([put(foreign.id,{...body(foreign),name:'forged'},foreign.version)]));
-  assert.equal(r.result.error_code,'rpg_version_conflict');assert.deepEqual(await b.game(),before);
+  assert.equal(r.result.error_code,'rpg_context_missing');assert.deepEqual(await b.game(),before);
 });
 
 test('deletion manifest scrubs RPG history from a restored snapshot',async()=>{

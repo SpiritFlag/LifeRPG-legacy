@@ -32,10 +32,14 @@ export async function activeEvent(tx:Queryable,owner:string,id:string) {
 /** Every generated payload inherits ALL context roots, not model-authored citations. */
 export async function savePayload(tx:Queryable,owner:string,kind:string,body:unknown,roots:string[]) {
   const ids=[...new Set(roots)];
-  for(const id of ids) await activeEvent(tx,owner,id);
+  if(ids.length) {
+    const rows=(await tx.query('SELECT id,deleted_at FROM events WHERE owner_id=$1 AND id=ANY($2::uuid[])',[owner,ids])).rows;
+    if(rows.length!==ids.length)throw new DomainError('not_found');
+    if(rows.some(e=>e.deleted_at))throw new DomainError('deleted');
+  }
   const id=randomUUID();
   await tx.query('INSERT INTO payloads(id,owner_id,kind,body) VALUES($1,$2,$3,$4)',[id,owner,kind,JSON.stringify(body)]);
-  for(const event of ids) await tx.query('INSERT INTO payload_sources(owner_id,payload_id,event_id) VALUES($1,$2,$3)',[owner,id,event]);
+  if(ids.length)await tx.query('INSERT INTO payload_sources(owner_id,payload_id,event_id) SELECT $1,$2,unnest($3::uuid[])',[owner,id,ids]);
   return id;
 }
 export async function payloadRoots(tx:Queryable,owner:string,ids:string[]):Promise<string[]> {

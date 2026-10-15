@@ -12,7 +12,6 @@ const definitions=new Set(['profession','skill','trait','title','achievement','i
 export async function readRpg(tx:Queryable,owner:string):Promise<RpgEntity[]> {
   const rows=(await tx.query(`SELECT e.*,p.body AS public_body,s.body AS private_body FROM rpg_entities e
     LEFT JOIN payloads p ON p.id=e.public_payload LEFT JOIN payloads s ON s.id=e.private_payload WHERE e.owner_id=$1 ORDER BY e.id`,[owner])).rows;
-  if(rows.length>200)fail('rpg_context_limit');
   return rows.map(e=>({id:e.id,kind:e.kind,version:e.version,body:e.public_body??e.private_body?.body??null,
     private_notes:e.private_body?.notes??null,visibility:e.public_body?'public':'private',retired:e.retired,
     needs_reinterpretation:e.needs_reinterpretation,public_payload:e.public_payload,private_payload:e.private_payload}));
@@ -21,7 +20,7 @@ export function publicRpg(entities:RpgEntity[]) {
   const visible=visibleEntities(entities);
   return visible.map(e=>({id:e.id,version:e.version,...e.body}));
 }
-function references(b:Body):string[] {
+export function references(b:Body):string[] {
   if(b.kind==='character')return [b.location,b.profession].filter((id):id is string=>!!id);
   if(b.kind==='holding')return [b.definition];
   if(b.kind==='relation')return [b.from,b.to];
@@ -57,13 +56,17 @@ export function effectiveStats(entities:RpgEntity[]) {
 
 /** Full in-memory validation precedes writes; caller commits this with XP/decision/memory. */
 export async function applyRpg(tx:Queryable,owner:string,input:{operations:Operation[];reward_source:string|null;scene:Scene|null},
-  options:{kind:string;requestId:string;roots:string[];eventId:string|null;xpDelta:number;worldTick:number}) {
+  options:{kind:string;requestId:string;roots:string[];eventId:string|null;xpDelta:number;worldTick:number;visibleIds?:string[]}) {
   const existing=await readRpg(tx,owner);
   const entities=new Map(existing.map(e=>[e.id,structuredClone(e)]));
   const aliases=new Map<string,string>();
   const history:RpgEntity[]=[];const changed=new Set<string>();const resolved:string[]=[];
   let tick=options.worldTick,benefit=options.xpDelta>0;
-  const ref=(value:string)=>value.startsWith('@')?(aliases.get(value)??fail('rpg_unknown_ref')):value;
+  const ref=(value:string)=>{
+    if(value.startsWith('@'))return aliases.get(value)??fail('rpg_unknown_ref');
+    if(options.visibleIds&&!options.visibleIds.includes(value)&&![...aliases.values()].includes(value))fail('rpg_context_missing');
+    return value;
+  };
   const get=(value:string)=>entities.get(ref(value))??fail('rpg_unknown_ref');
   // Allocate aliases first for forward references. Existing IDs must be supplied with their version.
   for(const op of input.operations)if((op.op==='put'||op.op==='inventory')&&op.expected_version===0) {
@@ -167,7 +170,7 @@ export async function applyRpg(tx:Queryable,owner:string,input:{operations:Opera
   }
   const all=[...entities.values()];
   if(options.kind==='start'&&!all.some(e=>e.kind==='character'&&e.body&&!e.retired))fail('rpg_birth_required');
-  if(all.length>200)fail('rpg_entity_limit');
+  if(all.length>10000)fail('rpg_entity_limit');
   if(effectiveStats(all).some(s=>Math.abs(s.value)>1000000))fail('rpg_stat_overflow');
   // Ordinary event and appeal entitlements are handled by the worker; independent rewards need a resolved source.
   let rewardId:string|null=null;
@@ -198,5 +201,5 @@ export async function applyRpg(tx:Queryable,owner:string,input:{operations:Opera
   const changes=all.filter(e=>changed.has(e.id)&&(e.visibility==='public'||existing.some(old=>old.id===e.id&&old.visibility==='public')))
     .map(e=>({kind:'entity' as const,id:e.id,entity_kind:e.kind,version:e.version,retired:e.retired,
       removed:e.retired||e.visibility!=='public',state:e.visibility==='public'?e.body:null}));
-  return {changes,scene:presentation,world_tick:tick,effective_stats:effectiveStats(all)};
+  return {changes,scene:presentation,world_tick:tick,effective_stats:effectiveStats(all),aliases};
 }

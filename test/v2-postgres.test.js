@@ -52,7 +52,7 @@ test('real local PostgreSQL: independent connections, locks, lease recovery and 
     try {await admin.query('CREATE DATABASE liferpg_v2_test');} finally {await admin.end();}
     const url=`postgresql://v2test:${password}@127.0.0.1:${port}/liferpg_v2_test`;
     const migration=new pg.Client({connectionString:url});await migration.connect();
-    try {for(const file of ['001-foundation.sql','002-openai-accounting.sql','003-rpg.sql'])await migration.query(await readFile(new URL(`../migrations/v2/${file}`,import.meta.url),'utf8'));}
+    try {for(const file of ['001-foundation.sql','002-openai-accounting.sql','003-rpg.sql','004-memory.sql'])await migration.query(await readFile(new URL(`../migrations/v2/${file}`,import.meta.url),'utf8'));}
     finally {await migration.end();}
     rawA=connectDatabase(url);rawB=connectDatabase(url);
     const a=scopedDatabase(rawA),b=scopedDatabase(rawB);

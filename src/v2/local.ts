@@ -22,6 +22,8 @@ if(isNew) {
 }
 if(!(await pg.query("SELECT 1 FROM information_schema.tables WHERE table_schema='liferpg_v2' AND table_name='rpg_entities'")).rows.length)
   await pg.exec(await readFile(new URL('../../migrations/v2/003-rpg.sql',import.meta.url),'utf8'));
+if(!(await pg.query("SELECT 1 FROM information_schema.tables WHERE table_schema='liferpg_v2' AND table_name='memory_sources'")).rows.length)
+  await pg.exec(await readFile(new URL('../../migrations/v2/004-memory.sql',import.meta.url),'utf8'));
 const db=scopedDatabase({query:async(sql,values)=>pg.query(sql,values),transaction:fn=>pg.transaction(tx=>fn({query:async(sql,values)=>tx.query(sql,values)}))});
 // Kept outside the database directory; do not restore it from an old DB backup.
 const journal=await openDeletionJournal(db,resolve('.local/v2-deletions.json'),isNew);

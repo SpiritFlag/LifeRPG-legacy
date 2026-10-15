@@ -18,7 +18,7 @@ import {readConfig} from '../src/config.js';
 import {login,mcpClient} from '../scripts/client.js';
 
 let pg,db;
-const sql=(await Promise.all(['001-foundation.sql','003-rpg.sql'].map(file=>readFile(new URL(`../migrations/v2/${file}`,import.meta.url),'utf8')))).join('\n');
+const sql=(await Promise.all(['001-foundation.sql','003-rpg.sql','004-memory.sql'].map(file=>readFile(new URL(`../migrations/v2/${file}`,import.meta.url),'utf8')))).join('\n');
 function adapter(pg) {return scopedDatabase({query:(s,v)=>pg.query(s,v),transaction:fn=>pg.transaction(tx=>fn({query:(s,v)=>tx.query(s,v)}))});}
 before(async()=>{pg=new PGlite();await pg.exec(sql);db=adapter(pg);});
 after(async()=>{await pg.close();});

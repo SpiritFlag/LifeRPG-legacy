@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { rpgFields } from './rpg-contracts.ts';
+import { memoryProposal } from './memory-contracts.ts';
 
 const uuid = z.uuid();
 const requestId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/);
@@ -30,7 +31,7 @@ export const proposal = z.strictObject({
   outcome:z.enum(['commit','clarify','no_change']), summary:z.string().min(1).max(2000),
   xp_delta:z.number().int().min(-1000).max(1000).default(0),
   question:z.string().min(1).max(500).optional(),
-  memories:z.array(z.strictObject({kind:z.enum(['identity','episode','reflection','summary','world']),text:z.string().min(1).max(2000)})).max(5).default([]),
+  memories:z.array(memoryProposal).max(5).default([]),
   operations:rpgFields.operations.default([]),reward_source:rpgFields.reward_source.default(null),scene:rpgFields.scene.default(null),
 }).refine(v=>v.outcome==='clarify' ? !!v.question && v.xp_delta===0 && !v.memories.length : !v.question)
   .refine(v=>v.outcome!=='no_change' || (v.xp_delta===0 && !v.memories.length))

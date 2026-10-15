@@ -20,6 +20,7 @@ import {setMockBudget} from '../src/v2/admin.ts';
 import {V2_SCOPES} from '../src/v2/contracts.ts';
 import {deriveMemory} from '../src/v2/memory.ts';
 import {createV2App} from '../src/v2/app.ts';
+import {memoryProposal} from '../src/v2/memory-contracts.ts';
 import {readConfig} from '../src/config.js';
 import {login,mcpClient} from '../scripts/client.js';
 
@@ -29,11 +30,11 @@ const wire={outcome:'commit',summary:'합성 판정',xp_delta:0,question:null,me
   operations:[{op:'put',ref:'@hero',expected_version:0,visibility:'public',private_notes:null,body:{kind:'character',name:'합성 영웅',description:'테스트 모험가',level:1,stats:[],profession:null,location:null}}],reward_source:null,scene:null};
 const envelope=(changes={},p=wire)=>({model:config.model,status:'completed',service_tier:'default',
   usage:{input_tokens:1000,input_tokens_details:{cached_tokens:100,cache_write_tokens:200},output_tokens:100,output_tokens_details:{reasoning_tokens:40},total_tokens:1100},
-  output:[{type:'reasoning',summary:[]},{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify(p)}]}],...changes});
+  output:[{type:'reasoning',summary:[]},{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({...p,memories:p.memories.map(m=>memoryProposal.parse(m))})}]}],...changes});
 let pg,db;
 before(async()=>{
   pg=new PGlite();
-  for(const file of ['001-foundation.sql','002-openai-accounting.sql','003-rpg.sql'])await pg.exec(await readFile(new URL(`../migrations/v2/${file}`,import.meta.url),'utf8'));
+  for(const file of ['001-foundation.sql','002-openai-accounting.sql','003-rpg.sql','004-memory.sql'])await pg.exec(await readFile(new URL(`../migrations/v2/${file}`,import.meta.url),'utf8'));
   db=scopedDatabase({query:(s,v)=>pg.query(s,v),transaction:fn=>pg.transaction(tx=>fn({query:(s,v)=>tx.query(s,v)}))});
 });
 after(async()=>pg.close());
