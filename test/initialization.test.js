@@ -195,7 +195,7 @@ test('numeric/profile schema, OAuth scopes, foreign owner, synthetic gate and re
   await assert.rejects(f.db.transaction(tx=>applyGmUpdate(tx,'other-owner',applyGmSchema.parse(finish(draft)),false)),e=>e.outcome==='not_found');
   await f.call('apply_gm_update',finish(draft));
   assert.equal((await f.call('apply_gm_update',{mode:'advance',request_key:'birth-begin',expected_revision:1,reason,character_change:{changes:{destiny:'Next'},reason}})).outcome,'idempotency_conflict');
-  assert.equal((await f.client.listTools()).tools.length,9);
+  assert.equal((await f.client.listTools()).tools.length,10);
 });
 
 test('same-revision concurrent preparations/finalizations commit once and synthetic full births remain distinct',async t=>{

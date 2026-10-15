@@ -3,6 +3,17 @@ import { EventConflict,serialized } from './storage.js';
 
 const terminal=new Set(['completed','failed','abandoned']);
 const storyFields=['title','description','goal','progress','ending','status'];
+/** @param {any} before @param {any} changes @param {any} operation */
+function validateTask(before,changes,operation) {
+  const next={real_task:'',recurrence:null,...before,...changes};
+  if (next.recurrence && !next.real_task) throw new EventConflict('invalid_quest_task','A repeating task requires the actual task');
+  const taskChanged=changes.real_task !== undefined && changes.real_task !== (before?.real_task || '');
+  const repeatChanged=changes.recurrence !== undefined && changes.recurrence !== (before?.recurrence ?? null);
+  if ((taskChanged || repeatChanged) && operation.user_consent !== true) throw new EventConflict('quest_consent_required','Registering or changing a real task or repeat condition requires explicit user consent');
+  const restartingTask=before?.real_task && terminal.has(before.status) && changes.status === 'active';
+  const nextOccurrence=before?.status === 'completed' && before.recurrence;
+  if (restartingTask && !nextOccurrence && operation.user_consent !== true) throw new EventConflict('quest_consent_required','Reopening a one-time, failed or abandoned real task requires renewed consent');
+}
 /** @param {any} before @param {any} after @param {boolean} reopen */
 function transition(before,after,reopen) {
   if (reopen && (!terminal.has(before.status) || after.status !== 'active')) throw new EventConflict('invalid_quest_transition','Reopen requires a terminal state and target active');
@@ -67,6 +78,8 @@ export async function applyQuestChanges(db,game,updateId,operations) {
       const type=operation.operation === 'create_line' ? 'line' : 'node';
       const table=type === 'line' ? 'questlines' : 'quest_nodes';
       const content=Object.fromEntries(storyFields.map(k=>[k,/** @type {any} */(operation)[k]]));
+      validateTask(null,operation,operation);
+      for (const field of ['real_task','recurrence']) if (field in operation) content[field]=/** @type {any} */(operation)[field];
       const data=operation.operation === 'create_line' ? {game_id:game.id,line_key:operation.line_key,...content} : {game_id:game.id,questline_id:line.id,node_key:operation.node_key,kind:operation.kind,parent_id:parent?.id || null,...content};
       const before=operation.operation === 'create_line' ? await existing(table,'t.line_key=$2',[operation.line_key]) : await existing(table,'t.questline_id=$2 AND t.node_key=$3',[line.id,operation.node_key]);
       if (before && Object.keys(data).some(k=>serialized(before[k]) !== serialized(/** @type {any} */(data)[k]))) throw new EventConflict('quest_identity_conflict','Existing creation key requires explicit update',{id:before.id});
@@ -80,6 +93,7 @@ export async function applyQuestChanges(db,game,updateId,operations) {
       const type=operation.operation === 'update_line' ? 'line' : 'node',table=type === 'line' ? 'questlines' : 'quest_nodes';
       const id=resolve(operation.operation === 'update_line' ? operation.questline : operation.node,type);
       const before=await get(table,id),next={...before,...operation.changes};
+      validateTask(before,operation.changes,operation);
       transition(before,next,operation.reopen);
       const retained=operation.retain_children.map(ref=>resolve(ref,'node'));
       for (const child of retained) {
@@ -161,7 +175,7 @@ export async function getQuestContext(db,gameId,input) {
   const statuses=input.quest_statuses || (input.questline_id || input.event_id ? ['available','active','paused','completed','failed','abandoned'] : ['active']);
   const lines=(await db.query(`SELECT to_jsonb(q) AS value FROM questlines q WHERE game_id=$1 AND sequence>$2 AND status=ANY($3::text[])
     AND ($4::uuid IS NULL OR id=$4) AND ($5::uuid IS NULL OR EXISTS(SELECT 1 FROM event_quest_links e WHERE e.game_id=q.game_id AND e.questline_id=q.id AND e.event_id=$5 AND e.active)) ORDER BY sequence LIMIT $6`,[gameId,input.after_quest_sequence,statuses,input.questline_id || null,input.event_id || null,input.quest_limit+1])).rows.map(r=>r.value);
-  const summaries=lines.slice(0,input.quest_limit).map(line=>({id:line.id,sequence:line.sequence,line_key:line.line_key,title:line.title,status:line.status,version:line.version,goal:line.goal.slice(0,300),progress:line.progress.slice(0,300),ending:line.ending.slice(0,300),summary_truncated:[line.goal,line.progress,line.ending].some(text=>text.length>300)}));
+  const summaries=lines.slice(0,input.quest_limit).map(line=>({id:line.id,sequence:line.sequence,line_key:line.line_key,title:line.title,status:line.status,version:line.version,real_task:line.real_task || '',recurrence:line.recurrence ?? null,goal:line.goal.slice(0,300),progress:line.progress.slice(0,300),ending:line.ending.slice(0,300),summary_truncated:[line.goal,line.progress,line.ending].some(text=>text.length>300)}));
   const result={questlines:summaries,next_after_quest_sequence:lines.length>input.quest_limit ? lines[input.quest_limit-1].sequence : null};
   if (!input.questline_id) return result;
   const line=(await db.query('SELECT to_jsonb(q) AS value FROM questlines q WHERE game_id=$1 AND id=$2',[gameId,input.questline_id])).rows[0]?.value;

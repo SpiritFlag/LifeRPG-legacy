@@ -1,5 +1,13 @@
 # 전용 Vercel 배포
 
+## submit_observation 운영 반영 · 2026-10-15 09:44 KST
+
+사용자 승인으로 `submit_observation` 실험 도구를 production staged 빌드 후 promote했다. 현재 deployment는 `dpl_5Rnu3AXuMEoSbwVZnEy5jfEVw4cv`이며 READY/PROMOTED다. 이전 `dpl_6jfArqW1tNxAugbGpW6UJB1uVtpL` 업로드 원본과 대조한 39개 파일 중 실질 변경은 `src/tools.js`의 이번 실험 추가분 하나뿐이다. 로컬 미커밋 작업을 보존했고 Git push는 하지 않았다.
+
+두 canonical host(liferpg-mcp-experiment.vercel.app, liferpg.spiritflag.work)가 새 deployment로 연결됐으며 `/health` 200/running, `tools/list` 10개 및 새 입력·OAuth scope·쓰기 annotation을 확인했다. 기존 9개 도구의 전체 등록 정보는 이전 응답과 동일했다. 읽기 전용 life.read 검증 grant로 두 host의 `get_gm_status` storage=ready를 확인하고 검증 grant만 폐기했다. 이에 따른 OAuth 처리와 상태 조회 감사 2건 외 게임 쓰기, migration, 합성 사건 생성, submit_observation 호출은 수행하지 않았다. 환경변수와 WAF active/draft/bypass/attackMode 설정은 배포 전후 동일하다.
+
+로컬 build/type 검사와 서버 회귀 106/106이 통과했다. 운영 관측은 도구 등록과 서버 상태 확인 범위이며 실제 ChatGPT 실험은 사용자가 진행한다. 비공개 근거는 `.local/observation-deploy/`에 보존한다. 계약·최소 호출 절차는 [전달 실험](OBSERVATION-EXPERIMENT.md)을 따른다. 아래 이전 배포 항목은 당시 이력이다.
+
 ## 준비된 자원
 
 - Git remote: `git@github.com:SpiritFlag/LifeRPG.git` (공개 저장소, 최초 수신 시 빈 저장소).
@@ -13,7 +21,21 @@
 배포 project ID: `prj_v5gMi1veBor2Oa2DPmzHi9uJjHvk`.
 정식 MCP 연결 URL: **https://liferpg-mcp-experiment.vercel.app/mcp**.
 추가 production alias: `https://liferpg.spiritflag.work`. OAuth issuer/resource는 정식 연결 URL의 origin을 사용한다. ChatGPT 설정에서는 정식 URL을 그대로 사용한다.
-현재 배포: `dpl_69r2CnH3RhtKk8ViESBtrvMcyKK7`, source commit `f2ab06c`, Node.js 24, Function `sin1`, 상태 READY. 최초 원격 smoke와 수정 후 원격 브라우저 OAuth 검증 통과. Deployment Protection 설정은 변경하지 않았다.
+현재 배포: `dpl_6jfArqW1tNxAugbGpW6UJB1uVtpL`, Node.js 24, Function `sin1`, 상태 READY/PROMOTED. 2026-10-15 08:10 KST에 현실 할 일 퀘스트 기능을 운영 반영했다. Git HEAD `2e8b1b8` 이후 로컬 기능 변경을 CLI로 배포했으며 별도 Git push는 하지 않았다. Deployment Protection·WAF·OAuth 설정은 변경하지 않았다.
+
+## 현실 할 일 퀘스트 운영 반영 · 2026-10-15
+
+사용자의 운영 배포 요청으로 새 production 빌드를 skip-domain으로 준비한 뒤 008-real-task-quests.sql을 적용하고 promote했다. 실제 ChatGPT 프로젝트 지침은 사용자가 별도로 갱신했으므로 이번 배포에서 변경하지 않았다.
+
+- 새 암호화 백업 생성·인증·pg_restore 목록 검사 통과. 기존 별도 Neon branch의 합성 DB에서 008을 먼저 적용하고 원래 행 지문 보존을 확인했다.
+- 운영 migration 전후 39개 테이블의 원래 컬럼·행 지문이 같았다. smoke 후에도 인증·감사 테이블을 제외한 36개 게임 관련 테이블이 그대로였고 실제 게임 revision=3을 유지했다. 운영에 합성 사건·퀘스트·보상을 생성하지 않았다.
+- 서버 회귀 105개 통과. 기능 구현 시 퀘스트/웹 API·migration·브라우저 검증 33개와 빌드·타입 검사도 통과했다.
+- liferpg-mcp-experiment.vercel.app과 liferpg.spiritflag.work 모두 새 deployment로 연결됐다. 두 host의 인증된 tools/list가 도구 9개 및 real_task/recurrence/user_consent 입력을 반환하고 get_game_context(view=player)가 성공했다. health·웹·새 퀘스트 UI 자산은 200, 익명 player API는 401이었다.
+- WAF active version=6, 기존 규칙 2개, draft 없음, bypass 없음을 유지했다. 이전 deployment `dpl_51oiGLcHWdW3p1BQR4nRfPRuDb1w`는 코드 rollback 후보이며 추가 컬럼은 이전 코드와 호환된다.
+- 새 deployment의 08:01~08:11 KST 런타임 로그에서 level:error 조회 결과 0건, 추가 페이지·제외 구간 없음이었다. 이 결과는 해당 조회 구간에 한정한다.
+- ChatGPT 연결에서는 도구 스키마·설명·서버 지침을 받도록 앱 상세의 Refresh가 필요하다. 사용자 프로젝트 지침 교체와 별개이며 OAuth 재등록은 필요하지 않다. 자연어 제안·동의·독려의 실제 대화 품질은 사용자 환경에서 확인한다.
+
+비공개 증거는 `.local/real-task-quests/`의 production-migration.json, production-smoke.json, infrastructure-after.json, final-data-check.json, firewall-after.json과 테스트·백업 검증 로그에 보존했다. 비밀값과 실제 게임 본문은 공개 기록에 포함하지 않는다.
 
 사용자용 client secret·소유자 연결 키는 Git/배포에서 제외한 로컬 `.local/CHATGPT-CONNECTION.txt`에 제공한다. 실제 secret 값을 Git이나 대화에 붙여넣지 않는다.
 

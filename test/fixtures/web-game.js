@@ -15,6 +15,7 @@ export async function createFixture() {
     "005-character-content",
     "006-world-memory",
     "007-game-initialization",
+    "008-real-task-quests",
   ])
     await pg.exec(
       await readFile(

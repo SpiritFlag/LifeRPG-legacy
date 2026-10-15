@@ -71,7 +71,7 @@ const possession = (row) =>
 const quest = (row) =>
   pick(
     row,
-    "id sequence title description goal progress ending status kind parent_id questline_id summary_truncated",
+    "id sequence title description goal progress ending status kind parent_id questline_id real_task recurrence summary_truncated",
   );
 /** @param {any} page @param {(row:any)=>any} map */
 const page = (page, map) => ({

@@ -7,13 +7,16 @@ const temporary=z.string().regex(/^@[a-z][a-z0-9_-]{0,39}$/);
 const reference=z.union([uuid,temporary]);
 const key=z.string().trim().min(1).max(160).transform(normalizeEventKey).refine(s=>s.length>0 && s.length<=160);
 const reason=z.string().trim().min(1).max(500);
-const fields={title:z.string().trim().min(1).max(160),description:z.string().max(1000),goal:z.string().max(500),progress:z.string().max(1000),ending:z.string().max(1000),status:questStatus};
+// Optional without defaults: preserve hashes of previously saved retry inputs.
+const taskFields={real_task:z.string().trim().max(500).optional().describe('Actual task in the user’s words; preserve separately from fantasy prose.'),recurrence:z.string().trim().min(1).max(500).nullable().optional().describe('Only the user’s explicitly requested repeat condition. null/omitted means one-time.')};
+const consent={user_consent:z.literal(true).optional().describe('Set only after the user agrees to register this task or change its task/repeat condition.')};
+const fields={title:z.string().trim().min(1).max(160),description:z.string().max(1000),goal:z.string().max(500),progress:z.string().max(1000),ending:z.string().max(1000),status:questStatus,...taskFields};
 const createFields={...fields,description:fields.description.default(''),goal:fields.goal.default(''),progress:fields.progress.default(''),ending:fields.ending.default(''),status:z.enum(['available','active']).default('available')};
 const patch=z.strictObject(fields).partial().refine(v=>Object.keys(v).length>0);
-const updateFields={reason,reopen:z.boolean().default(false),retain_children:z.array(reference).max(100).default([]),changes:patch};
+const updateFields={reason,...consent,reopen:z.boolean().default(false),retain_children:z.array(reference).max(100).default([]),changes:patch};
 export const questOperationSchema=z.discriminatedUnion('operation',[
-  z.strictObject({operation:z.literal('create_line'),ref:temporary,line_key:key,reason,...createFields}),
-  z.strictObject({operation:z.literal('create_node'),ref:temporary,questline:reference,parent:reference.optional(),node_key:key,kind:z.enum(['chapter','quest']),reason,...createFields}),
+  z.strictObject({operation:z.literal('create_line'),ref:temporary,line_key:key,reason,...consent,...createFields}),
+  z.strictObject({operation:z.literal('create_node'),ref:temporary,questline:reference,parent:reference.optional(),node_key:key,kind:z.enum(['chapter','quest']),reason,...consent,...createFields}),
   z.strictObject({operation:z.literal('update_line'),questline:reference,...updateFields}),
   z.strictObject({operation:z.literal('update_node'),node:reference,...updateFields}),
   z.strictObject({operation:z.literal('link_nodes'),from:reference,to:reference,kind:z.enum(['prerequisite','branch']),label:z.string().max(500).default(''),active:z.boolean().default(true),reason}),

@@ -6,6 +6,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { createApp } from '../src/app.js';
 import { readConfig } from '../src/config.js';
 import { login,mcpClient,testEvent } from '../scripts/client.js';
+import { questOperationSchema } from '../src/quest-schema.js';
 
 const config=readConfig({PUBLIC_BASE_URL:'https://quests.example',OAUTH_CLIENT_SECRET:'client-'.repeat(8),OWNER_LOGIN_KEY:'owner-'.repeat(8),OAUTH_REDIRECT_URIS:'https://chatgpt.com/connector_platform_oauth_redirect',ALLOW_SYNTHETIC_GAME:'true'});
 let pg,db,app,client,tokens,legacy,oldGrowth,story;
@@ -36,8 +37,14 @@ before(async()=>{
   await pg.exec(await readFile(new URL('../migrations/005-character-content.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../migrations/006-world-memory.sql',import.meta.url),'utf8'));
   await pg.exec(await readFile(new URL('../migrations/007-game-initialization.sql',import.meta.url),'utf8'));
+  await pg.exec(await readFile(new URL('../migrations/008-real-task-quests.sql',import.meta.url),'utf8'));
 });
 after(async()=>{await client?.close();await pg?.close();});
+
+test('legacy quest inputs omit task defaults so saved retry hashes remain compatible',()=>{
+  const parsed=questOperationSchema.parse(line('@legacy','legacy-input'));
+  assert.equal('real_task' in parsed,false);assert.equal('recurrence' in parsed,false);assert.equal('user_consent' in parsed,false);
+});
 
 test('004 preserves existing events/growth receipts and creates no story',async()=>{
   const c=await context();assert.equal(c.character.xp_total,25);assert.deepEqual(c.questlines,[]);
@@ -203,7 +210,7 @@ test('bounded detail/history and link deactivation preserve IDs and past relatio
 });
 
 test('no added tools, OAuth scopes and strict operations remain enforced; foreign stories stay private',async()=>{
-  assert.equal((await client.listTools()).tools.length,9);
+  assert.equal((await client.listTools()).tools.length,10);
   const readerTokens=(await login(config.base,config,fetcher,'life.read')).tokens,reader=await mcpClient(config.base,readerTokens.access_token,fetcher);
   try{assert.equal((await reader.callTool({name:'apply_gm_update',arguments:{mode:'advance',request_key:'blocked',expected_revision:1,reason:'blocked',quest_changes:[line('@x','blocked')]}})).isError,true);}finally{await reader.close();}
   assert.equal((await apply('unknown-field',[{...line('@unknown','unknown'),world:'No world implementation'}])).structuredContent.outcome,'invalid_input');
@@ -216,4 +223,51 @@ test('no added tools, OAuth scopes and strict operations remain enforced; foreig
   assert.equal((await call('get_game_context',{questline_id:lineId})).structuredContent.outcome,'quest_not_found');
   assert.equal((await apply('foreign-story',[editLine(lineId,{status:'completed'})])).structuredContent.outcome,'quest_not_found');
   assert.equal((await context()).questlines.some(l=>l.id===lineId),false);
+});
+
+
+test('real tasks require consent, default to one-time and preserve facts without registration rewards',async()=>{
+  const before=await context(),c=await counts();
+  const task=line('@task','sort-papers',{title:'흩어진 길드 기록의 복원',description:'길드의 기록을 제자리로 돌려놓자.',real_task:'이번 주 서류 정리'});
+  assert.equal((await apply('task-without-consent',[task])).structuredContent.outcome,'quest_consent_required');
+  assert.deepEqual(await counts(),c);
+  assert.equal((await apply('task-false-consent',[{...task,user_consent:false}])).structuredContent.outcome,'invalid_input');
+  const operations=[{...task,user_consent:true}],revision=(await context()).revision;
+  const created=(await apply('task-create',operations,{expected_revision:revision})).structuredContent;
+  assert.equal(created.outcome,'committed');assert.deepEqual(created.after.character,before.character);
+  const id=created.quest_refs['@task'],q=(await detail(id)).questline;
+  assert.equal(q.real_task,task.real_task);assert.equal(q.recurrence,null);assert.equal(q.title,task.title);
+  assert.equal((await context()).questlines.find(q=>q.id===id).real_task,task.real_task);
+  assert.equal((await apply('task-create',operations,{expected_revision:revision})).structuredContent.outcome,'replayed');
+  assert.equal((await apply('task-duplicate',operations)).structuredContent.outcome,'unchanged');
+  assert.equal((await apply('task-repeat-without-consent',[editLine(id,{recurrence:'매주 월요일'})])).structuredContent.outcome,'quest_consent_required');
+  await apply('task-complete',[editLine(id,{status:'completed',ending:'기록 복원을 마쳤다.'})]);
+  assert.equal((await apply('task-implicit-repeat',[editLine(id,{status:'active'},{reopen:true})])).structuredContent.outcome,'quest_consent_required');
+  assert.equal((await detail(id)).questline.status,'completed');
+  assert.equal((await apply('task-agreed-reopen',[editLine(id,{status:'active'},{reopen:true,user_consent:true})])).structuredContent.outcome,'committed');
+});
+
+test('explicit recurring nodes reuse reopen/history and confirmed event rewards once per occurrence',async()=>{
+  assert.equal((await apply('repeat-without-task',[line('@badrepeat','bad-repeat',{recurrence:'매일',user_consent:true})])).structuredContent.outcome,'invalid_quest_task');
+  const created=(await apply('repeat-create',[line('@routine','routine-line'),node('@routinequest','@routine','walk-routine',{status:'active',title:'숲길의 순찰자',real_task:'20분 산책',recurrence:'매일',user_consent:true})])).structuredContent;
+  const id=created.quest_refs['@routinequest'],lineId=created.quest_refs['@routine'];
+  for(let round=1;round<=2;round++) {
+    const e=await event('recurring-walk-'+round),before=await context();
+    const operations=[editNode(id,{status:'completed',ending:'순찰 '+round+'회 완료'}),{operation:'link_event',questline:lineId,node:id,event_id:e.id,event_version:e.version,reason:'Confirmed separate occurrence'}];
+    const fields={adjudications:[judge(e)],expected_revision:before.revision};
+    const result=(await apply('recurring-completion-'+round,operations,fields)).structuredContent;
+    assert.equal(result.after.character.xp_total,before.character.xp_total+25);
+    assert.equal((await apply('recurring-completion-'+round,operations,fields)).structuredContent.outcome,'replayed');
+    if(round===1) {
+      const reopened=(await apply('recurring-next-occurrence',[editNode(id,{status:'active',progress:'두 번째 순찰'},{reopen:true})])).structuredContent;
+      assert.deepEqual(reopened.before.character,reopened.after.character);
+      assert.equal(reopened.quest_changes[0].after_state.ending,'순찰 1회 완료');
+    }
+  }
+  const d=await detail(lineId),q=d.nodes.items.find(q=>q.id===id);
+  assert.equal(q.real_task,'20분 산책');assert.equal(q.recurrence,'매일');assert.equal(q.status,'completed');
+  assert.equal(d.event_links.items.length,2);
+  assert.ok(d.history.items.some(h=>h.target_id===id && h.before_state?.status==='completed' && h.after_state.status==='active'));
+  assert.equal((await apply('stop-repeat',[editNode(id,{recurrence:null},{user_consent:true})])).structuredContent.outcome,'committed');
+  assert.equal((await apply('stopped-repeat-reopen',[editNode(id,{status:'active'},{reopen:true})])).structuredContent.outcome,'quest_consent_required');
 });

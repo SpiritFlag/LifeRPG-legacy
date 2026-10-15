@@ -4,6 +4,20 @@ ChatGPT가 유일한 GM 역할을 한다. 서버는 현실 사건·GM 판정·�
 
 로컬 코드에는 Phase 1 현실 사건, Phase 2 GM 판정·성장, Phase 3A 연속 퀘스트라인, Phase 3B 캐릭터 콘텐츠, Phase 3C 세계·NPC·GM 기억·일지·연대기, Phase 4 개인 웹사이트, Phase 5 정식 초기 생성이 구현되어 있다. Phase 6에서는 실제 Neon 격리 branch에서 001~007 이관·다중 연결·MVCC·timeout·재시도를 검증했다. 운영 서비스는 기존 실험 버전이며 운영 DB의 002~007 migration과 새 코드의 운영 배포는 실행하지 않았다. 전체 설계는 [DESIGN.md](DESIGN.md), 단계별 결과는 [1단계 검증](docs/PHASE1-VERIFICATION.md), [2단계 검증](docs/PHASE2-VERIFICATION.md), [Phase 3A 검증](docs/PHASE3A-VERIFICATION.md), [Phase 3B 검증](docs/PHASE3B-VERIFICATION.md), [Phase 3C 검증](docs/PHASE3C-VERIFICATION.md), [Phase 4 검증](docs/PHASE4-VERIFICATION.md), [Phase 5 검증](docs/PHASE5-VERIFICATION.md), [Phase 6 검증](docs/PHASE6-VERIFICATION.md)을 따른다.
 
+## 현실 할 일 기반 퀘스트
+
+008-real-task-quests.sql은 기존 questlines/quest_nodes에 real_task(text, 기본 빈 문자열, 최대 500자)와 recurrence(nullable text, 최대 500자)를 추가한다. 기존 행의 상태·버전·결말은 유지되며 recurrence=null은 일회성이다. recurrence는 사용자가 명시한 반복 조건 원문이고 자동 일정 계산용 문법이 아니다. 반복 조건에는 비어 있지 않은 real_task가 필요하다.
+
+기존 apply_gm_update.quest_changes의 create_line/create_node, update_line/update_node.changes에 두 필드를 지원한다. 신규 입력 필드는 optional이며 생략 시 파싱 기본값을 추가하지 않아 기존 request hash/영수증 재시도 계약을 유지한다. 현실 과업 등록·변경 및 반복 조건 변경은 operation.user_consent=true를 요구하고 없으면 quest_consent_required로 전체 요청을 거부한다. 이 값은 GM이 대화상 동의를 확인했다는 명시적 선언이며 서버가 사용자 대화 자체를 판독하지는 않는다. 현실 과업이 없는 반복 설정은 invalid_quest_task다.
+
+독립 과업은 기존 라인, 관련 이야기의 과업은 kind=quest 노드로 등록한다. title/description은 판타지 서술, real_task는 실제 할 일과 완료 조건을 보존한다. 등록 자체에는 현실 사건이나 XP를 만들지 않는다. 실제 수행 보고가 확인되면 기존 현실 사건 중복 확인·기록, link_event, 완료 상태 변경, adjudications/content_changes를 재사용한다. 사건 연결과 상태 변경만으로 자동 보상을 지급하지 않는다.
+
+반복도 완료 시 completed로 보존한다. GM이 이후 대화에서 명시된 다음 반복 조건을 확인하면 같은 UUID를 reopen=true/status=active로 재개한다. 부모·선행 조건 검증, 이력, request_key와 expected_revision은 기존 계약을 따른다. 이전 ending은 명시적으로 바꾸지 않으면 유지되고 이전 회차의 상태는 불변 이력에 남는다. real_task가 있는 일회성 또는 failed/abandoned 재개에는 user_consent=true가 다시 필요하다. 서버 시간 경과·조회로 자동 재활성화하지 않는다.
+
+get_game_context의 라인 요약·집중 라인/노드와 웹 공개 투영·변경 이력에 real_task/recurrence를 포함한다. 웹은 기존 퀘스트 카드·상세·노드 화면에서 실제 할 일과 일회성/반복 조건을 HTML escape하여 표시한다. 별도 쓰기 API나 할 일 관리 화면을 만들지 않는다.
+
+GM 프로젝트 지침은 docs/CHATGPT-TEST.md의 복사용 지침을 따른다. 대화 중 제안→명시적 동의→등록 순서, 미완료 available/active/paused 조회와 필요한 페이지 탐색, 적절한 순간의 짧은 독려, 휴식·거절 존중을 규정한다. MCP 서버 instructions와 apply_gm_update 설명에도 같은 원칙을 반영한다. 실제 ChatGPT 프로젝트 설정 교체와 자연스러운 장기 대화 동작은 별도 사용자 환경에서 확인해야 한다.
+
 ## Phase 4 개인 웹 조회
 
 `/`는 정적 RPG 화면이며 캐릭터·소지품·퀘스트라인·세계·모험 일지를 hash navigation으로 탐색한다. `GET /api/web-config`는 Clerk publishable key만 반환한다. 게임 데이터는 `GET /api/player?q=<JSON>`로 읽는다. 브라우저는 DB나 MCP에 직접 연결하지 않는다.
@@ -17,6 +31,8 @@ READ ONLY·REPEATABLE READ 트랜잭션에서 기존 `getGameContext(view:player
 게임이 없으면 `initialized:false`를 표시하며 조회가 게임을 만들지 않는다. 새로고침은 최신 revision을 다시 읽는다. 합성 데이터는 메모리 PGlite 전용 preview script에만 있으며 운영 API에 인증 우회나 합성 생성 경로는 없다. 실제 Clerk 개발 계정으로 합성 화면 접근을 확인했고, 운영 Neon과 배포 환경 검증은 수행하지 않았다. 실행법과 상세 결과는 [Phase 4 검증](docs/PHASE4-VERIFICATION.md)에 기록한다.
 
 ## 구현
+
+- 실험용 `submit_observation`: `{summary,test_id}`를 받아 기존 `tool_calls`에만 수신 결과·UTC 시각·테스트 ID를 남긴다. 같은 ID의 재수신도 개별 기록하며 duplicate와 최초 call_id를 반환한다. OAuth life.write를 유지하고 사건·게임 상태와 외부 GM에는 관여하지 않는다. 새 migration은 없다. 계약과 최소 테스트는 [전달 실험](docs/OBSERVATION-EXPERIMENT.md)을 따른다. 호출마다 감사 행을 추가하므로 이 도구의 idempotentHint는 false다.
 
 - Node.js 24, 공식 `@modelcontextprotocol/sdk`, Zod, `pg` 서버. Phase 4는 `@clerk/backend`, `@clerk/clerk-js`, esbuild와 프레임워크 없는 JavaScript/CSS 화면을 추가한다. ORM·별도 백엔드·LLM API 없음.
 - 기존 `api/server.js` Web Request/Response 핸들러는 MCP/OAuth를 유지한다. 웹 읽기는 별도 `api/web.js` 핸들러다. `/mcp`는 세션을 서버 메모리에 저장하지 않는 Streamable HTTP + JSON 응답이다. GET SSE와 DELETE 세션은 제공하지 않는다.

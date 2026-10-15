@@ -173,13 +173,16 @@ function xp() {
   const c = data.character;
   return `<div class="xp-meta"><span>LEVEL ${c.level} <span>→ ${c.level + 1}</span></span><span>${num(c.xp_in_level)} <span>/ ${num(c.xp_for_next_level)} XP</span></span></div><progress class="xp" value="${c.xp_in_level}" max="${c.xp_for_next_level}" aria-label="다음 레벨까지 경험치"></progress><p class="footnote">다음 레벨까지 ${num(c.xp_to_next_level)} XP · 누적 ${num(c.xp_total)} XP</p>`;
 }
+function taskInfo(q) {
+  return q.real_task ? `<div class="quest-goal"><small>현실의 할 일</small><p>${esc(q.real_task)}</p><small>${q.recurrence ? `반복 · ${esc(q.recurrence)}` : '일회성'}</small></div>` : '';
+}
 function questCards(lines) {
   return lines
     .map((q, i) =>
       detailButton(
         "quest",
         q.id,
-        `<div class="quest-card-top"><span class="quest-number">${String(i + 1).padStart(2, "0")}</span>${badge(q.status)}</div><h3>${esc(q.title)}</h3><p>${esc(q.progress || q.goal || q.description || "다음 장면을 기다리고 있습니다.")}</p><div class="quest-card-bottom"><span>이야기 펼치기</span><span>↗</span></div>`,
+        `<div class="quest-card-top"><span class="quest-number">${String(i + 1).padStart(2, "0")}</span>${badge(q.status)}</div><h3>${esc(q.title)}</h3><p>${esc(q.progress || q.goal || q.description || "다음 장면을 기다리고 있습니다.")}</p>${taskInfo(q)}<div class="quest-card-bottom"><span>이야기 펼치기</span><span>↗</span></div>`,
         "quest-card",
       ),
     )
@@ -560,7 +563,7 @@ function renderDetail() {
     const q = d.questline;
     title = q.title;
     overline = "QUESTLINE · 이어지는 이야기";
-    body = `${badge(q.status)}<p class="prose">${esc(q.description)}</p><div class="quest-goal"><small>현재의 목표</small><p>${esc(q.goal || "아직 기록되지 않았습니다.")}</p>${q.progress ? `<small>지나온 장면</small><p>${esc(q.progress)}</p>` : ""}${q.ending ? `<small>남겨진 결말</small><p>${esc(q.ending)}</p>` : ""}</div><h3>장과 여정</h3><div class="chapter-list">${d.nodes.items.map((n) => `<article class="${n.kind === "chapter" ? "chapter" : "quest-node"}" id="node-${esc(n.id)}"><div>${badge(n.status)}<h4>${esc(n.title)}</h4></div>${n.parent_id ? `<small>↳ ${esc(d.nodes.items.find((p) => p.id === n.parent_id)?.title || "앞선 장에 속한 퀘스트")}</small>` : ""}<p>${esc(n.description || n.goal)}</p><p>${esc(n.ending || n.progress)}</p></article>`).join("") || empty()}</div>${more("nodes", d.nodes.next_after_sequence, "detail")}<h3>갈림길과 이어지는 이야기</h3>${d.node_links.items
+    body = `${badge(q.status)}${taskInfo(q)}<p class="prose">${esc(q.description)}</p><div class="quest-goal"><small>현재의 목표</small><p>${esc(q.goal || "아직 기록되지 않았습니다.")}</p>${q.progress ? `<small>지나온 장면</small><p>${esc(q.progress)}</p>` : ""}${q.ending ? `<small>남겨진 결말</small><p>${esc(q.ending)}</p>` : ""}</div><h3>장과 여정</h3><div class="chapter-list">${d.nodes.items.map((n) => `<article class="${n.kind === "chapter" ? "chapter" : "quest-node"}" id="node-${esc(n.id)}"><div>${badge(n.status)}<h4>${esc(n.title)}</h4></div>${n.parent_id ? `<small>↳ ${esc(d.nodes.items.find((p) => p.id === n.parent_id)?.title || "앞선 장에 속한 퀘스트")}</small>` : ""}${taskInfo(n)}<p>${esc(n.description || n.goal)}</p><p>${esc(n.ending || n.progress)}</p></article>`).join("") || empty()}</div>${more("nodes", d.nodes.next_after_sequence, "detail")}<h3>갈림길과 이어지는 이야기</h3>${d.node_links.items
       .filter((l) => l.active)
       .map(
         (l) =>

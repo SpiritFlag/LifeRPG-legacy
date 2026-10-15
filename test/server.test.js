@@ -30,7 +30,7 @@ after(async () => {await client?.close(); await pg?.close();});
 
 test('official SDK discovers legacy tools and event history tools with correct annotations',async () => {
   const listed = await client.listTools();
-  assert.deepEqual(listed.tools.map(t => t.name),['get_gm_status','record_life_event','list_life_events','update_life_events','get_life_event','get_game_context','list_gm_adjudications','apply_gm_update','get_gm_update']);
+  assert.deepEqual(listed.tools.map(t => t.name),['submit_observation','get_gm_status','record_life_event','list_life_events','update_life_events','get_life_event','get_game_context','list_gm_adjudications','apply_gm_update','get_gm_update']);
   const write = listed.tools.find(t => t.name === 'record_life_event');
   assert.equal(write.annotations.readOnlyHint,false);
   assert.equal(write.annotations.idempotentHint,true);
@@ -42,6 +42,48 @@ test('official SDK discovers legacy tools and event history tools with correct a
   const status = await client.callTool({name:'get_gm_status',arguments:{}});
   assert.equal(status.structuredContent.storage,'ready');
 });
+test('observation receipts are isolated, persistent, duplicate-aware and scope protected',async () => {
+  const tables = (await db.query("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('tool_calls','oauth_grants','auth_attempts') ORDER BY tablename")).rows;
+  const snapshot = async () => Promise.all(tables.map(async ({tablename}) => [tablename,(await db.query(`SELECT to_jsonb(t) AS row FROM "${tablename}" t ORDER BY to_jsonb(t)::text`)).rows]));
+  const beforeState = await snapshot();
+  const input = {test_id:'observation-probe-001',summary:'Synthetic delivery probe'};
+  const send = args => client.callTool({name:'submit_observation',arguments:args});
+  const metadata = (await client.listTools()).tools.find(t => t.name === 'submit_observation');
+  assert.equal(metadata.annotations.readOnlyHint,false);
+  assert.equal(metadata.annotations.idempotentHint,false);
+  assert.deepEqual(metadata._meta.securitySchemes,[{type:'oauth2',scopes:['life.write']}]);
+  const first = (await send(input)).structuredContent;
+  assert.equal(first.outcome,'received');
+  assert.equal(first.received,true);
+  assert.equal(first.first_call_id,first.call_id);
+  assert.ok(!Number.isNaN(Date.parse(first.received_at)));
+  const retry = (await send({...input,summary:'Changed summary still repeats the ID'})).structuredContent;
+  assert.equal(retry.outcome,'duplicate');
+  assert.equal(retry.first_call_id,first.call_id);
+  assert.notEqual(retry.call_id,first.call_id);
+  const concurrent = await Promise.all([send({...input,test_id:'observation-concurrent'}),send({...input,test_id:'observation-concurrent'})]);
+  assert.deepEqual(concurrent.map(r=>r.structuredContent.outcome).sort(),['duplicate','received']);
+  for (const args of [{...input,summary:''},{...input,test_id:'bad id'},{...input,summary:'x'.repeat(301)},{...input,secret:'not-recorded'}]) assert.equal((await send(args)).isError,true);
+  const readerTokens = (await login(config.base,config,fetcher,'life.read')).tokens;
+  const reader = await mcpClient(config.base,readerTokens.access_token,fetcher);
+  try {assert.equal((await reader.callTool({name:'submit_observation',arguments:input})).isError,true);} finally {await reader.close();}
+  const anonymous = await fetcher(`${config.base}/mcp`,{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:50,method:'tools/call',params:{name:'submit_observation',arguments:input}})});
+  assert.equal(anonymous.status,401);
+  const receipts = (await db.query("SELECT * FROM tool_calls WHERE tool='submit_observation' AND outcome IN ('received','duplicate')")).rows;
+  assert.equal(receipts.length,4);
+  assert.ok(receipts.every(r=>r.completed_at && r.arguments.test_id && r.result.received && r.event_id === null));
+  assert.deepEqual(await snapshot(),beforeState);
+  const failingDb = {...db,transaction:fn=>db.transaction(tx=>fn({query:(sql,values)=>sql.startsWith('INSERT INTO tool_calls') ? Promise.reject(new Error('audit unavailable')) : tx.query(sql,values)}))};
+  const failingApp = createApp(failingDb,config);
+  const failedClient = await mcpClient(config.base,tokens.access_token,(input,init)=>failingApp(input instanceof Request ? input : new Request(input,init)));
+  try {
+    const failed = await failedClient.callTool({name:'submit_observation',arguments:{...input,test_id:'observation-failure'}});
+    assert.equal(failed.isError,true);
+    assert.equal(failed.structuredContent.outcome,'storage_error');
+    assert.equal((await send({...input,test_id:'observation-failure'})).structuredContent.outcome,'received');
+  } finally {await failedClient.close();}
+});
+
 test('anonymous, forged and expired tokens cannot register events',async () => {
   const n = await count();
   for (const token of [undefined,'x'.repeat(43)]) assert.equal((await rpc(testEvent,token)).status,401);

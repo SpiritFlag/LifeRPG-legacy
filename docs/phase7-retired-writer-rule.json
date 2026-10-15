@@ -1,13 +1,15 @@
 {
-  "name": "Life RPG canonical MCP origin only",
+  "name": "Life RPG canonical deployments only",
   "conditionGroup": [
     { "conditions": [
       { "type": "path", "op": "pre", "value": "/mcp" },
-      { "type": "host", "op": "neq", "value": "liferpg-mcp-experiment.vercel.app" }
+      { "type": "host", "op": "neq", "value": "liferpg-mcp-experiment.vercel.app" },
+      { "type": "host", "op": "neq", "value": "liferpg.spiritflag.work" }
     ] },
     { "conditions": [
       { "type": "path", "op": "pre", "value": "/oauth" },
-      { "type": "host", "op": "neq", "value": "liferpg-mcp-experiment.vercel.app" }
+      { "type": "host", "op": "neq", "value": "liferpg-mcp-experiment.vercel.app" },
+      { "type": "host", "op": "neq", "value": "liferpg.spiritflag.work" }
     ] }
   ],
   "action": { "mitigate": { "action": "deny" } }

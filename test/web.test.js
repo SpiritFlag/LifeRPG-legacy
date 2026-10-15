@@ -350,3 +350,20 @@ test("storage failures disclose no database diagnostics or secret connection inf
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), { error: "game_unavailable" });
 });
+
+
+test('real task metadata reaches cards, dashboard, node details and public history',async()=>{
+  const result=await fixture.apply({mode:'advance',quest_changes:[
+    {operation:'create_line',ref:'@task',line_key:'web-task',title:'길드 기록의 복원',description:'잃어버린 기록을 정리하자.',real_task:'서류 정리 <img src=x onerror=alert(1)>',user_consent:true,status:'active',reason:'SECRET_TASK_REASON'},
+    {operation:'create_node',ref:'@repeat',questline:'@task',node_key:'repeat',kind:'quest',title:'숲의 순찰',real_task:'20분 산책',recurrence:'매일',user_consent:true,status:'active',reason:'SECRET_TASK_REASON'}
+  ]});
+  const id=result.quest_refs['@task'];
+  const detail=await (await api(request({questline_id:id}))).json();
+  assert.equal(detail.questline.real_task,'서류 정리 <img src=x onerror=alert(1)>');assert.equal(detail.questline.recurrence,null);
+  assert.equal(detail.nodes.items[0].recurrence,'매일');
+  assert.equal(detail.history.items.find(h=>h.target_type==='line').after_state.real_task,detail.questline.real_task);
+  assert.ok(!JSON.stringify(detail).includes('SECRET_TASK_REASON'));
+  const overview=await (await api(request({dashboard:true}))).json();
+  assert.equal(overview.questlines.find(q=>q.id===id).real_task,detail.questline.real_task);
+  assert.equal(overview.dashboard.questlines.find(q=>q.id===id).real_task,detail.questline.real_task);
+});

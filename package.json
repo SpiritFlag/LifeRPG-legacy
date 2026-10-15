@@ -18,6 +18,7 @@
     "dev:web": "node scripts/serve-web.js",
     "preview:web": "node scripts/build-web.js && node scripts/preview-web.js",
     "test:web": "node --test test/web.test.js",
+    "test:quests:browser": "npm run build && node --test test/real-task-browser.test.js",
     "preview:web:clerk": "node scripts/build-web.js && node scripts/preview-web.js --clerk"
   },
   "dependencies": {

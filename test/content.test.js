@@ -214,7 +214,7 @@ test('content summaries, focused versions, possessions and past history are boun
 });
 
 test('MCP tool count, OAuth scopes and game ownership remain enforced for content operations',async()=>{
-  const tools=(await client.listTools()).tools;assert.equal(tools.length,9);assert.ok(JSON.stringify(tools.find(t=>t.name==='apply_gm_update').inputSchema).includes('content_changes'));
+  const tools=(await client.listTools()).tools;assert.equal(tools.length,10);assert.ok(JSON.stringify(tools.find(t=>t.name==='apply_gm_update').inputSchema).includes('content_changes'));
   const readerTokens=(await login(config.base,config,fetcher,'life.read')).tokens,reader=await mcpClient(config.base,readerTokens.access_token,fetcher);
   try{assert.equal((await reader.callTool({name:'get_game_context',arguments:{}})).isError,false);assert.equal((await reader.callTool({name:'apply_gm_update',arguments:{mode:'advance',request_key:'forbidden',expected_revision:1,reason:'blocked',content_changes:[define('@d','item','blocked')]}})).isError,true);}finally{await reader.close();}
   const foreign=await db.transaction(tx=>applyGmUpdate(tx,'foreign-content-owner',applyGmSchema.parse(initial),true));

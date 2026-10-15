@@ -1,10 +1,10 @@
-# Life RPG 운영 전환 절차 · A·B 완료, C 이후 승인 대기
+# Life RPG 운영 전환 절차 · A~E 완료, 서비스 재개
 
-2026-10-14 · Phase 8-A 차단·백업 및 Phase 8-B 운영 웹/Clerk 변수 적용 완료 · 운영 migration/배포는 실행하지 않았다.
+2026-10-14 23:19 KST. D/E 일괄 승인으로 운영 002→007 migration, 기존 staged promote와 서비스 재개를 완료했다. 실제 생성(F)은 미승인·미실행이다.
 
-**현재 프로젝트 전체 유지보수 WAF가 활성이다.** 22:01 KST에 publish한 rule_life_rpg_transition_maintenance_L748fV를 유지한다. canonical/과거 deployment 차단과 운영 데이터 불변, 22:11 KST 암호화 snapshot 백업·격리 복구가 통과했다. [PHASE8A-VERIFICATION.md](PHASE8A-VERIFICATION.md)의 실제 검증 범위와 한계를 따른다. **B에서 production Clerk/웹 변수 4개를 추가했고 기존 설정·WAF·deployment/alias 보존을 확인했다.** [PHASE8B-VERIFICATION.md](PHASE8B-VERIFICATION.md)를 따르며 **C~E는 별도 지시 전 실행하지 않는다.**
+**운영 DB는 007이고 canonical MCP·웹은 기존 staged의 새 release를 서비스한다.** deployment는 dpl_51oiGLcHWdW3p1BQR4nRfPRuDb1w, release SHA는 2e8b1b8d0650cc9b912b5fa14b6f681d0fda6616다. 사건 6행·원래 audit 30행은 보존됐다. 기존 연결의 정상 refresh 회전과 smoke 감사 1행만 발생했다. 유지보수 규칙은 disabled로 보존하고 구버전 writer 규칙은 active다. [PHASE8DE-VERIFICATION.md](PHASE8DE-VERIFICATION.md)의 실제 결과와 한계를 따른다.
 
-현재 운영 DB는 001이고 서비스는 기존 MCP 실험 버전이다. 새 코드는 001~007 schema와 Clerk 웹 설정을 요구한다. DB 전환과 새 코드 배포 사이에 쓰기를 재개하지 않는다. 검증 결과와 한계는 [PHASE6-VERIFICATION.md](PHASE6-VERIFICATION.md), [PHASE7-VERIFICATION.md](PHASE7-VERIFICATION.md)를 따른다. Phase 7에서 운영 이메일 인증·DNS/TLS·암호화 백업/격리 복구·로컬 차단/릴리스 검증을 완료했다. 아래 승인 범위를 확정한 뒤 Phase 8을 실행한다.
+**실제 기존 connector transport는 https://liferpg.spiritflag.work/mcp다.** issuer/resource는 기존 https://liferpg-mcp-experiment.vercel.app 및 해당 /mcp로 유지한다. 두 canonical host 모두 새 deployment임을 확인하여 이 두 host만 MCP/OAuth에 허용하고 과거 unique deployment·팀/branch alias는 차단한다. 원래 단일-host WAF 가정은 기존 연결을 차단하여 실측에 따라 보정했다.
 
 ## 승인 지점
 
@@ -12,12 +12,12 @@
 | --- | --- |
 | A · 전환 창과 백업 | 전환 시간, 프로젝트 전체 유지보수 및 구버전 host 차단 규칙의 실제 publish/검증, 전환 직전 새 백업과 별도 복구 branch/필요 비용. **로컬 AES/DPAPI 백업의 위치·기간은 이미 승인됨** |
 | B · 인증·환경 | 준비된 Clerk 운영 이메일 인증의 웹 origin·운영 소유자/키를 Vercel production 변수에 적용. 별도 direct 관리 설정 준비. 유료 기능·새 비용은 별도 승인 |
-| C · 코드 공개/운영 배포 | 검토한 정확한 commit, main push의 자동 deployment 또는 명시적 staged production deployment, MCP maxDuration 120초의 운영 적용과 사용량 영향 |
+| C · 릴리스·staged 배포 | 검토한 정확한 로컬 commit과 공식 CLI의 production staged deployment만 승인됨. Git 원격 push·canonical promote·환경변수/DB 변경은 제외. 추가 승인으로 alias 복원·C 완료. 이후 D/E 일괄 승인으로 운영 전환 완료 |
 | D · 운영 migration | 백업·쓰기 차단·격리 검증 확인 후 운영 br-spring-night-a1jbloxd/liferpg_experiment의 **002→003→004→005→006→007** 적용 |
 | E · 전환 완료/복구 | 라우팅·인증·데이터 대조를 확인한 새 코드 공개와 쓰기 재개. 실패 시 복구 대상·복구 시점·손실 가능 변경을 확인하고 별도 승인 |
 | F · 실제 최초 게임 | 운영 전환 검증과 별개로 ChatGPT GM의 실제 사용자 캐릭터·세계 최초 생성. smoke에서 실행하지 않는다 |
 
-형은 Phase 7 백업 방식/위치/기간과 운영 이메일 인증을 승인했고 실제 로그인 ID를 전달했다. 이후 Phase 8-A의 차단·백업과 Phase 8-B의 production 환경변수를 각각 승인하여 실행했다. **이 승인은 C~F의 코드 배포·migration·쓰기 재개·실제 게임을 승인한 것이 아니다.** Phase 6 검증 branch는 일시 자원이며 자동 운영 전환/복구의 근거로 사용하지 않는다. 수다방 프로젝트 지침 변경은 별도 요청 대상이다.
+형은 Phase 7 백업 방식/위치/기간과 운영 이메일 인증을 승인했고 실제 로그인 ID를 전달했다. 이후 Phase 8-A의 차단·백업과 Phase 8-B의 production 환경변수를 각각 승인하여 실행했다. C의 로컬 릴리스 commit과 production staged deployment도 별도로 승인했다. 이후 alias 복원·C 완료와 D/E migration·운영 전환·서비스 재개를 추가 승인받아 완료했다. **Git push·실제 생성(F)은 미승인이다.** Phase 6 검증 branch는 일시 자원이며 자동 운영 전환/복구의 근거로 사용하지 않는다. 수다방 프로젝트 지침 변경은 별도 요청 대상이다.
 
 ## 1. 대상과 변경물 확정
 
@@ -33,7 +33,7 @@ MCP origin은 **https://liferpg-mcp-experiment.vercel.app**으로 유지한다. 
 
 웹 canonical origin은 형이 결정한 **https://liferpg.spiritflag.work**이다. 승인 B에서 WEB_PUBLIC_BASE_URL에 지정한다. 새 변수는 웹의 Origin/authorizedParties에만 적용하고 MCP의 token resource에는 적용하지 않는다. 웹은 이 canonical origin에서 사용하며 다른 alias의 token azp를 무작정 허용하지 않는다.
 
-Phase 8-B에서 Vercel production에 CLERK_PUBLISHABLE_KEY(Config), CLERK_SECRET_KEY(Secret), CLERK_OWNER_USER_ID(Config), WEB_PUBLIC_BASE_URL(Config)를 추가했다. 다른 환경에는 적용하지 않았다. 기존 6개 변수는 보존했으며 DATABASE_DIRECT_URL과 ALLOW_SYNTHETIC_GAME은 없다. 변수 값은 이 적용 결과에 기록하지 않는다. 새 deployment가 아직 없어 현재 배포에 이 설정이 반영됐다고 가정하지 않는다. Phase 7의 준비 근거는 다음과 같다.
+Phase 8-B에서 Vercel production에 CLERK_PUBLISHABLE_KEY(Config), CLERK_SECRET_KEY(Secret), CLERK_OWNER_USER_ID(Config), WEB_PUBLIC_BASE_URL(Config)를 추가했다. 다른 환경에는 적용하지 않았다. 기존 6개 변수는 보존했으며 DATABASE_DIRECT_URL과 ALLOW_SYNTHETIC_GAME은 없다. 변수 값은 이 적용 결과에 기록하지 않는다. 기존 staged에 반영된 설정으로 E의 실제 소유자 로그인과 Cookie/API 허용을 확인했다. Phase 7의 준비 근거는 다음과 같다.
 
 - 운영 Clerk 인스턴스 ins_3KgHQpUdWBwxfzGUrj4QjQpr2zs, primary/home/로그인 후 redirect는 canonical 웹이다. Cloudflare의 기존 CNAME·Clerk DNS verified 및 웹/Clerk/계정 포털 TLS를 확인했다. 이번에 DNS를 변경하지 않았다.
 - 형의 최신 선택은 **이메일 코드 인증**이다. Google 운영 연결은 Disabled, 별도 Google OAuth 자격증명은 필요 없다. live publishable/secret key는 개발 키와 분리한 비공개 `.env.clerk.production.local`에 있다. 키를 대화·명령 인수·Git에 넣지 않고 기존 Secret/Config 변수 체계로 설정한다.
@@ -52,7 +52,7 @@ Clerk·DNS의 신규 권한/자원/비용이 필요하면 보고하고 승인 �
 
 새 release의 `MAINTENANCE_WRITES=true`는 인증/DB 전에 503을 반환하는 보조 수단이다. flag 적용/해제에는 새 deployment가 필요하며 기존 deployment를 보호하지 않는다. 프로젝트 WAF를 필수 경계로 삼는다. staged release는 WAF 차단 아래 기본 flag=false로 준비할 수 있고, flag=true로 배포했다면 smoke/재개 전에 해당 flag를 해제한 새 배포도 승인 C 범위에 포함한다.
 
-전체 차단을 풀기 전에 [구버전 writer 차단 후보](phase7-retired-writer-rule.json)를 publish한다. MCP/OAuth는 기존 canonical host만 허용하고 과거 deployment URL·다른 alias에서는 거부한다. 웹 API/정적/health/discovery는 유지한다. **전환 후에도 이 규칙을 유지**하고 과거 URL 403·canonical 새 코드 접근을 실제 검증한다. 전체 유지보수 규칙만 삭제하면 구버전 writer가 다시 열릴 수 있다.
+전체 차단을 풀기 전에 [구버전 writer 차단 후보](phase7-retired-writer-rule.json)를 publish한다. MCP/OAuth는 새 deployment를 가리키는 기존 canonical MCP 및 실제 connector가 사용하는 canonical 웹 host만 허용하고 과거 deployment URL·다른 alias에서는 거부한다. 웹 API/정적/health/discovery는 유지한다. **전환 후에도 이 규칙을 유지**하고 과거 URL 403·canonical 새 코드 접근을 실제 검증한다. 전체 유지보수 규칙만 삭제하면 구버전 writer가 다시 열릴 수 있다.
 
 차단 이후 READ ONLY/REPEATABLE READ snapshot에서 schema·행 수·원본 column hash·OAuth grant·감사·현재 deployment를 기록한다. 이후 hash가 달라지면 원인을 확인할 때까지 중단한다.
 
@@ -76,7 +76,9 @@ node scripts/phase7-backup.js restore
 
 ## 4. 새 코드의 배포 준비 · 승인 C
 
-공식 CLI의 `vercel deploy --prod --skip-domain`을 승인 C 이후 사용하면 production 환경의 staged deployment를 만들며 alias 자동 전환을 생략한다. 이번에는 help와 `deploy --dry --json`만 실행했다. staged URL도 실제 운영 DB를 바라보므로 WAF 차단·승인된 읽기 검증을 지키고 schema 이전에는 새 게임 API를 사용하지 않는다. migration 이후 승인 E에서 정확한 production deployment를 promote한다. main push의 자동 alias 변경과 이 수동 경로를 섞지 않으며 Git 동기화 시 자동 배포 정책도 승인 범위에 포함한다. [Vercel deploy](https://vercel.com/docs/cli/deploy).
+공식 CLI 64.0.2의 `vercel deploy --prod --skip-domain --yes --no-wait --json`을 승인 C에서 실행했다. commit `2e8b1b8d0650cc9b912b5fa14b6f681d0fda6616`, deployment `dpl_51oiGLcHWdW3p1BQR4nRfPRuDb1w`는 READY/STAGED다. 그러나 **`--skip-domain`을 모든 기존 alias 불변의 보장으로 사용하면 안 된다.** 실제 API는 autoAssignCustomDomains=false이면서 automaticAliases에 `liferpg-mcp-experiment-jeong-sin-gis-projects.vercel.app`을 포함했고 이 alias가 새 배포로 바뀌었다. canonical MCP/웹과 main alias, project production target은 이전 배포를 유지했다. 이 관측으로 C를 중단하고 원격 alias 복원이나 추가 배포는 수행하지 않았다. [Vercel deploy](https://vercel.com/docs/cli/deploy)의 일반 설명보다 이번 프로젝트의 실제 alias mapping을 우선한다.
+
+C는 추가 승인으로 팀 기본 alias 하나를 이전 deployment에 복원하고 staged 검증을 마쳐 완료했다. D/E 승인 뒤 같은 staged를 promote했다. staged URL도 실제 운영 DB를 바라보므로 WAF 차단·승인된 읽기 검증을 지키고 schema 이전에는 새 게임 API를 사용하지 않는다. migration 이후 승인 E에서 정확한 production deployment를 promote한다. main push의 자동 alias 변경과 이 수동 경로를 섞지 않으며 Git 동기화 시 자동 배포 정책도 승인 범위에 포함한다.
 
 로컬 vercel.json의 예정 계약:
 
@@ -131,3 +133,8 @@ DB migration 전의 코드 실패는 기존 deployment/alias로 복귀할 수 �
 기존 MCP URL·issuer/resource·client ID/secret·callback·grant를 유지하므로 **프로토콜상 일괄 재연결은 필수가 아니다**. 실제 ChatGPT 도구 목록 cache가 새 9개 schema를 반영하지 않으면 앱의 연결/도구 목록 갱신을 확인하고 필요한 경우 형이 재연결한다. 만료·폐기된 token은 정상 OAuth 재승인이 필요할 수 있다. 검증 없이 모든 grant를 지우거나 client secret을 회전하지 않는다.
 
 운영 전환 결과·마지막 schema·release commit·승인 범위·남은 제약을 기록한다. backup/검증 branch의 보존·삭제는 승인된 정책을 따른다. 운영 전환 승인과 실제 캐릭터·세계 생성 승인을 혼동하지 않으며, 수다방 지침 변경은 별도 합의 때 진행한다.
+
+
+## 실행 완료 상태 · 2026-10-14 23:19 KST
+
+D의 002→007 순차 migration과 E의 기존 staged 전환·기존 연결/OAuth refresh·Clerk owner Cookie API 검증·서비스 재개가 완료됐다. 최종 WAF version=6, maintenance disabled, canonical deployments only active, draft=null/bypass=[]다. 현재 connector의 새 도구 캐시 갱신은 필요하며 get_game_context는 운영 READ ONLY GM storage와 실제 웹 API에서 unstarted를 확인했다. 실제 다른 계정/변조 azp 세션은 추가 발급하지 않았다. 실제 게임 생성(F)은 별도 승인이다. [PHASE8DE-VERIFICATION.md](PHASE8DE-VERIFICATION.md)를 따른다.
