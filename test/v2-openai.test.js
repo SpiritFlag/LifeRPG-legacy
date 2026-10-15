@@ -15,7 +15,7 @@ import {readOpenAiConfig,reservation,costMicroUsd,SOL_PRICE} from '../src/v2/ope
 import {GmWorker} from '../src/v2/worker.ts';
 import {LifeRpgService} from '../src/v2/service.ts';
 import {scopedDatabase} from '../src/v2/storage.ts';
-import {configureBudget,budgetUsage,resumeBudgetJobs} from '../src/v2/budget.ts';
+import {configureBudget,budgetUsage,resumeBudgetJobs,operatingMonthlyBudget,configureOperatingMonthlyBudget,canReserve} from '../src/v2/budget.ts';
 import {setMockBudget} from '../src/v2/admin.ts';
 import {V2_SCOPES} from '../src/v2/contracts.ts';
 import {deriveMemory} from '../src/v2/memory.ts';
@@ -44,14 +44,19 @@ function fixture(transport=async()=>({status:200,body:envelope()})) {
   const gm=new OpenAiGm(config,transport),worker=new GmWorker(db,gm);
   const call=(tool,input)=>service.execute(tool,input,identity);
   const result=id=>call('read_liferpg',{view:'request',operation_id:id});
-  const start=()=>call('interact_with_gm',{request_id:randomUUID(),kind:'start',message:'[SYNTHETIC] start'});
+  const start=async()=>{await setMockBudget(db,identity.subject,1000000);return call('interact_with_gm',{request_id:randomUUID(),kind:'start',message:'[SYNTHETIC] start'});};
   return {identity,service,gm,worker,call,result,start};
 }
 const signal=()=>new AbortController().signal;
 
 test('configuration defaults to Sol medium, explicit price required on model change, paid gate fails closed',async()=>{
   assert.equal(config.model,'gpt-6.1-sol');assert.equal(config.reasoning,'medium');
-  assert.equal(reservation(config),61440);
+  assert.equal(config.maxOutputTokens,16384);assert.equal(config.maxInputTokens,16384);
+  assert.equal(reservation(config),204800);
+  assert.equal(operatingMonthlyBudget({}),10000000);
+  assert.equal(operatingMonthlyBudget({GM_OPERATING_MONTHLY_BUDGET_MICRO_USD:'0'}),0);
+  assert.throws(()=>operatingMonthlyBudget({GM_OPERATING_MONTHLY_BUDGET_MICRO_USD:'-1'}));
+  assert.throws(()=>readOpenAiConfig({GM_MAX_OUTPUT_TOKENS:'16385'}));
   assert.throws(()=>readOpenAiConfig({GM_MODEL:'another-model'}));
   assert.equal(readOpenAiConfig({GM_MODEL:'another-model',GM_PRICE_CARD_JSON:JSON.stringify(SOL_PRICE)}).model,'another-model');
   assert.throws(()=>readOpenAiConfig({GM_REASONING_EFFORT:'none'}));
@@ -74,6 +79,53 @@ test('synthetic timing uses operation_id without input request_id and cannot bre
   const failed=new OpenAiGm(config,async()=>{calls++;return {status:403,body:null};});
   const result=await measureSyntheticGm(failed,s=>samples.push(s)).generate(context,signal());
   assert.equal(calls,3);assert.equal(result.failure.code,'gm_provider_rejected');assert.equal(samples[1].http_status,403);
+});
+
+test('new output ceiling is sent and settled, incomplete output remains terminal, excess is rejected',async()=>{
+  for(const [output,status,code] of [[3000,'completed',undefined],[16384,'completed',undefined],[16384,'incomplete','gm_incomplete'],[16385,'completed','gm_token_bound_exceeded']]) {
+    const body=envelope({status,usage:{input_tokens:1000,output_tokens:output,total_tokens:1000+output,
+      input_tokens_details:{cached_tokens:100,cache_write_tokens:200},output_tokens_details:{reasoning_tokens:2000}}});
+    const r=await new OpenAiGm(config,async request=>{assert.equal(request.max_output_tokens,16384);return {status:200,body};}).generate(context,signal());
+    assert.equal(r.failure?.code,code);assert.equal(r.usage.cost,1910+output*10);
+  }
+  assert.equal(costMicroUsd(SOL_PRICE,16384,0,16384,16384),reservation(config));
+});
+
+test('operating monthly setup preserves historic unknown/settled usage, other limits and jobs',async()=>{
+  const f=fixture();await f.start();
+  const oldWorker=new GmWorker(db,new OpenAiGm(readOpenAiConfig({GM_MAX_OUTPUT_TOKENS:'2048'}),async()=>({status:400,body:null})));
+  await oldWorker.runOnce(); // Synthetic historical-sized unknown reservation.
+  const settled=fixture();await settled.start();await settled.worker.runOnce();
+  await configureBudget(db,{lifetime:7000000,daily:900000,monthly:500000});
+  const before={attempts:(await db.query('SELECT * FROM attempts ORDER BY id')).rows,
+    jobs:(await db.query('SELECT * FROM jobs ORDER BY id')).rows,games:(await db.query('SELECT * FROM games ORDER BY owner_id')).rows,
+    usage:await db.transaction(budgetUsage)};
+  assert.equal(before.usage.lifetime,String(61440+2910));
+  await configureOperatingMonthlyBudget(db);
+  assert.deepEqual((await db.query('SELECT * FROM attempts ORDER BY id')).rows,before.attempts);
+  assert.deepEqual((await db.query('SELECT * FROM jobs ORDER BY id')).rows,before.jobs);
+  assert.deepEqual((await db.query('SELECT * FROM games ORDER BY owner_id')).rows,before.games);
+  assert.deepEqual(await db.transaction(budgetUsage),before.usage);
+  const limits=(await db.query('SELECT * FROM gm_budget')).rows[0];
+  assert.equal(Number(limits.monthly_limit),10000000);assert.equal(Number(limits.daily_limit),900000);assert.equal(Number(limits.lifetime_limit),7000000);
+  await configureOperatingMonthlyBudget(db,Number(before.usage.monthly)+reservation(config)-1);
+  assert.equal(await db.transaction(tx=>canReserve(tx,reservation(config))),false);
+  await configureOperatingMonthlyBudget(db,Number(before.usage.monthly)+reservation(config));
+  assert.equal(await db.transaction(tx=>canReserve(tx,reservation(config))),true);
+});
+
+test('operating preflight is read-only and does not inherit old synthetic budget settings',async()=>{
+  const dir=await mkdtemp(join(tmpdir(),'liferpg-operating-preflight-'));
+  const script=fileURLToPath(new URL('../src/v2/openai-preflight.ts',import.meta.url));
+  const options={cwd:dir,env:{SystemRoot:process.env.SystemRoot,PATH:process.env.PATH,OPENAI_API_KEY:'SYNTHETIC-SECRET',
+    GM_MONTHLY_BUDGET_MICRO_USD:'150000',DATABASE_URL:'must-not-connect'}};
+  try {
+    const {stdout}=await promisify(execFile)(process.execPath,[script],options),r=JSON.parse(stdout);
+    assert.equal(r.mode,'offline_preflight');assert.equal(r.max_output_tokens,16384);assert.equal(r.reservation_micro_usd,204800);
+    assert.equal(r.operating_monthly_budget_micro_usd,10000000);assert.equal(r.empty_month_worst_case_calls,48);
+    assert.equal(r.budget_applied,false);assert.equal(r.ledger_checked,false);assert.equal(r.paid_calls_authorized,false);
+    assert.ok(!stdout.includes('SYNTHETIC-SECRET'));assert.deepEqual(await readdir(dir),[]);
+  } finally {await rm(dir,{recursive:true,force:true});}
 });
 
 test('synthetic CLI dry-run needs no key/DB and --execute without approval fails before creating data',async()=>{
@@ -102,6 +154,7 @@ test('local fake HTTP Responses endpoint validates strict request and cached/wri
     const reply=await gm.generate(context,signal());
     assert.equal(calls,1);assert.equal(sent.model,config.model);assert.equal(sent.reasoning.effort,'medium');
     assert.equal(sent.store,false);assert.equal(sent.service_tier,'default');assert.equal(sent.truncation,'disabled');
+    assert.equal(sent.max_output_tokens,16384);
     assert.equal(sent.text.format.strict,true);assert.deepEqual(sent.text.format.schema,GM_OUTPUT_SCHEMA);
     assert.deepEqual(GM_OUTPUT_SCHEMA.required,['outcome','summary','xp_delta','question','memories','operations','reward_source','scene']);
     assert.equal(sent.tools,undefined);assert.equal(sent.previous_response_id,undefined);
@@ -116,6 +169,7 @@ test('refusal, incomplete, invalid JSON and unverified usage never become propos
     [envelope({output:[{type:'message',role:'assistant',content:[{type:'refusal',refusal:'synthetic private text'}]}]}),'gm_refused',2910],
     [envelope({output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'broken'}]}]}),'invalid_gm_output',2910],
     [envelope({}, {...wire,extra:'injection'}),'invalid_gm_output',2910],
+    ...[8,9].map(importance=>[envelope({output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({...wire,memories:[{...memoryProposal.parse({kind:'episode',text:'synthetic'}),importance}]})}]}]}),'invalid_gm_output',2910]),
     [envelope({}, {...wire,outcome:'no_change',xp_delta:5}),'invalid_gm_output',2910],
     [envelope({usage:null}),'gm_usage_unverified',undefined],
     [envelope({service_tier:'ultrafast'}),'gm_usage_unverified',null],
@@ -156,7 +210,7 @@ test('actual adapter through worker commits once, records versioned price and re
 });
 
 test('global budget blocks different owners, unknown charges carry across day/month and operator resume preserves spend',async()=>{
-  await configureBudget(db,{lifetime:61440,daily:61440,monthly:61440});
+  await configureBudget(db,{lifetime:204800,daily:204800,monthly:204800});
   const a=fixture(),b=fixture();const ra=await a.start();const rb=await b.start();
   const c=await a.worker.claim();assert.ok(c);
   const other=c.owner===a.identity.subject?b:a;const otherReceipt=c.owner===a.identity.subject?rb:ra;
@@ -165,16 +219,16 @@ test('global budget blocks different owners, unknown charges carry across day/mo
   await a.worker.fail(c);
   // Force prior-month timestamp to prove unknown charges do not disappear with a window reset.
   await db.query("UPDATE attempts SET created_at=clock_timestamp()-interval '40 days'");
-  assert.deepEqual(await db.transaction(budgetUsage),{lifetime:'61440',daily:'61440',monthly:'61440'});
-  await configureBudget(db,{lifetime:200000,daily:200000,monthly:200000});
+  assert.deepEqual(await db.transaction(budgetUsage),{lifetime:'204800',daily:'204800',monthly:'204800'});
+  await configureBudget(db,{lifetime:1000000,daily:1000000,monthly:1000000});
   await resumeBudgetJobs(db,other.identity.subject);
   assert.equal((await other.result(otherReceipt.operation_id)).status,'queued');
-  assert.equal((await db.transaction(budgetUsage)).lifetime,'61440');
+  assert.equal((await db.transaction(budgetUsage)).lifetime,'204800');
 });
 
 test('each server budget window independently blocks before dispatch; settled windows roll over without resetting lifetime',async()=>{
   for(const window of ['lifetime','daily','monthly']) {
-    await configureBudget(db,{lifetime:1000000,daily:1000000,monthly:1000000,[window]:61439});
+    await configureBudget(db,{lifetime:1000000,daily:1000000,monthly:1000000,[window]:204799});
     let called=false;const f=fixture(async()=>{called=true;return {status:200,body:envelope()};});
     const r=await f.start();await f.worker.runOnce();assert.equal(called,false);
     assert.equal((await f.result(r.operation_id)).status,'blocked_budget');
@@ -201,7 +255,7 @@ test('HTTP 400 diagnostics stay internal while worker preserves unknown reservat
   const receipt=await f.result(r.operation_id);
   assert.equal(calls,1);assert.equal(receipt.error_code,'gm_provider_rejected');
   assert.ok(!JSON.stringify(receipt).includes(diagnostic.request_id));
-  assert.equal((await db.transaction(budgetUsage)).lifetime,'61440');
+  assert.equal((await db.transaction(budgetUsage)).lifetime,'204800');
   const attempt=(await db.query('SELECT state,actual_cost,input_tokens,output_tokens FROM attempts')).rows[0];
   assert.deepEqual(attempt,{state:'unknown',actual_cost:null,input_tokens:null,output_tokens:null});
   assert.equal((await db.query('SELECT count(*)::int AS n FROM decisions')).rows[0].n,0);
@@ -226,7 +280,7 @@ test('lost response retains reservation and bounded retries; timeout aborts tran
   const r=await f.start();
   for(let i=0;i<3;i++){await f.worker.runOnce();await db.query('UPDATE jobs SET available_at=clock_timestamp()');}
   assert.equal((await f.result(r.operation_id)).status,'failed');
-  assert.equal((await db.transaction(budgetUsage)).lifetime,String(3*61440));
+  assert.equal((await db.transaction(budgetUsage)).lifetime,String(3*204800));
   assert.equal(await f.worker.runOnce(),false);
   let aborted=false;
   const slow=fixture(async(_body,s)=>new Promise((_,reject)=>s.addEventListener('abort',()=>{aborted=true;reject(new Error('aborted'));},{once:true})));
@@ -271,6 +325,7 @@ test('MCP OpenAI mode keeps five tools and accurately marks remote paid effects;
     assert.equal((await db.query('SELECT count(*)::int AS n FROM attempts')).rows[0].n,0);
     const receipt=await client.callTool({name:'interact_with_gm',arguments:{request_id:randomUUID(),kind:'start',message:'[SYNTHETIC] MCP start'}});
     assert.equal(receipt.structuredContent.status,'queued');
+    await db.query('UPDATE games SET budget_limit=1000000');
     await new GmWorker(db,new OpenAiGm(config,async()=>({status:200,body:envelope()}))).runOnce();
     const committed=await client.callTool({name:'read_liferpg',arguments:{view:'request',operation_id:receipt.structuredContent.operation_id}});
     assert.equal(committed.structuredContent.status,'committed');

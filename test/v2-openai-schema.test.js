@@ -2,11 +2,13 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {z} from 'zod';
 import Ajv2020 from 'ajv/dist/2020.js';
+import addFormats from 'ajv-formats';
 import {compileStructuredSchema,assertStructuredSchema} from '../src/v2/openai-schema.ts';
 import {readSafeProviderError,safeProviderError} from '../src/v2/openai-errors.ts';
 import {OpenAiGm,createLiveOpenAiGm,GM_OUTPUT_SCHEMA} from '../src/v2/openai-gm.ts';
 import {readOpenAiConfig} from '../src/v2/openai-config.ts';
 import {operation,entityBody} from '../src/v2/rpg-contracts.ts';
+import {wireMemory} from '../src/v2/memory-contracts.ts';
 import {measureSyntheticGm} from '../src/v2/synthetic-metrics.ts';
 
 const object=properties=>({type:'object',properties,required:Object.keys(properties),additionalProperties:false});
@@ -21,9 +23,72 @@ test('actual wire schema passes strict local profile and an independent JSON Sch
   const profile=assertStructuredSchema(GM_OUTPUT_SCHEMA);
   assert.equal(profile.properties,84);assert.equal(profile.max_depth,6);
   assert.ok(!JSON.stringify(GM_OUTPUT_SCHEMA).includes('"oneOf"'));
-  new Ajv2020({strict:true}).compile(GM_OUTPUT_SCHEMA);
+  addFormats(new Ajv2020({strict:true})).compile(GM_OUTPUT_SCHEMA);
   assert.throws(()=>{GM_OUTPUT_SCHEMA.type='array';},TypeError);
-  assert.ok(Object.isFrozen(GM_OUTPUT_SCHEMA.$defs.__schema3.anyOf));
+  assert.ok(Object.isFrozen(GM_OUTPUT_SCHEMA.properties.operations.items.anyOf));
+});
+
+test('wire and Zod agree on numeric/array bounds, including importance 0..3 and all operation limits',()=>{
+  const contract=z.strictObject({memory:wireMemory,change:operation});
+  const {$schema,...raw}=z.toJSONSchema(contract,{reused:'ref'});
+  const ajv=addFormats(new Ajv2020({strict:true})),validate=ajv.compile(compileStructuredSchema(raw));
+  const memory={kind:'episode',text:'synthetic',importance:0,unresolved:false,claim_type:'interpretation',entity_ids:[],source_memory_ids:[],replaces_memory_id:null,reason:null};
+  // Parse supplies the exact current memory contract; no hardcoded duplicate schema.
+  const base={memory:wireMemory.parse(memory),change:{op:'advance_time',ticks:1}};
+  for(const importance of [-1,0,1,3,4,8,9,1.5]) {
+    const value={...base,memory:{...base.memory,importance}};
+    assert.equal(validate(value),contract.safeParse(value).success);
+    assert.equal(validate(value),[0,1,3].includes(importance));
+  }
+  const changes=[
+    ...[0,1,1000,1001,1.5].map(ticks=>({op:'advance_time',ticks})),
+    ...[-1000001,-1000000,0,1000000,1000001].map(delta=>({op:'inventory',ref:'@bag',definition:'@item',expected_version:0,delta})),
+    ...[-1,0,1000000,1000001].map(expected_version=>({op:'retire',ref:'@item',expected_version})),
+    ...[0,1,1000000,1000001].map(level=>({op:'put',ref:'@hero',expected_version:0,visibility:'public',private_notes:null,body:{kind:'character',name:'hero',description:'fiction',level,stats:[],profession:null,location:null}})),
+    {op:'retire',ref:'not-an-alias-or-uuid',expected_version:0},
+  ];
+  for(const change of changes)assert.equal(validate({...base,change}),contract.safeParse({...base,change}).success);
+  for(const field of ['entity_ids','source_memory_ids']) {
+    const value={...base,memory:{...base.memory,[field]:Array(9).fill('11111111-1111-4111-8111-111111111111')}};
+    assert.equal(validate(value),false);assert.equal(contract.safeParse(value).success,false);
+  }
+  assert.deepEqual(GM_OUTPUT_SCHEMA.properties.xp_delta,{type:'integer',minimum:-1000,maximum:1000});
+  assert.equal(GM_OUTPUT_SCHEMA.properties.operations.maxItems,32);
+  assert.equal(GM_OUTPUT_SCHEMA.properties.memories.maxItems,5);
+});
+
+test('unsupported string length bounds become accurate guidance; server still rejects excessive lengths',()=>{
+  const c=z.strictObject({text:z.string().min(1).max(5)}),{$schema,...raw}=z.toJSONSchema(c);
+  const converted=compileStructuredSchema(raw);
+  assert.equal(converted.properties.text.description,'Length 1..5.');
+  assert.equal(converted.properties.text.maxLength,undefined);
+  assert.equal(c.safeParse({text:'😀😀'}).success,true);assert.equal(c.safeParse({text:'😀😀😀😀😀😀'}).success,false);
+});
+
+test('definition compression preserves nested refs, bounds, and literal data instead of replacing strings',()=>{
+  const literal='#/$defs/long_name';
+  const raw={...object({a:{$ref:'#/$defs/long_name'},b:{$ref:'#/$defs/shared'},c:{$ref:'#/$defs/shared'},
+    [literal]:{type:'string',const:literal}}),$defs:{long_name:{$ref:'#/$defs/chained'},chained:{type:'integer',minimum:0,maximum:3},
+    shared:{type:'string',pattern:'^x+$',description:literal}}};
+  const saved=structuredClone(raw),result=compileStructuredSchema(raw),ajv=new Ajv2020({strict:true});
+  const before=ajv.compile(raw),after=ajv.compile(result);
+  for(const a of [-1,0,3,4])for(const b of ['x','no']) {
+    const data={a,b,c:'x',[literal]:literal};assert.equal(after(data),before(data));
+  }
+  assert.deepEqual(raw,saved);assert.equal(result.properties[literal].const,literal);
+  assert.equal(result.properties.a.maximum,3);assert.ok(JSON.stringify(result).length<JSON.stringify(raw).length);
+});
+
+test('preflight validates supported bounds and their value/type compatibility',()=>{
+  const good=object({n:{type:'number',exclusiveMinimum:0,maximum:3,multipleOf:0.5},a:{type:'array',minItems:0,maxItems:5,items:{type:'string',format:'uuid'}},s:{type:'string',pattern:'^@a+$',description:'synthetic'}});
+  assert.doesNotThrow(()=>assertStructuredSchema(good));
+  for(const field of [
+    {type:'string',minimum:0},{type:'number',minimum:'0'},{type:'number',maximum:Infinity},
+    {type:'integer',minimum:4,maximum:3},{type:'number',multipleOf:0},
+    {type:'array',items:{type:'string'},maxItems:-1},{type:'array',items:{type:'string'},minItems:3,maxItems:2},
+    {type:'string',pattern:'['},{type:'string',format:'password'},{type:'string',description:10},
+    {type:'string',minLength:1},
+  ])assert.throws(()=>assertStructuredSchema(object({value:field})),/gm_schema_/);
 });
 
 test('all RPG discriminators preserve structural acceptance under oneOf to anyOf conversion',()=>{

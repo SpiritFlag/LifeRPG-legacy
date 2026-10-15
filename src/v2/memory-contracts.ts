@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import { entityRef } from './rpg-contracts.ts';
+import { entityRef,uuid } from './rpg-contracts.ts';
 
 export const memoryFields={
   kind:z.enum(['identity','episode','reflection','summary','world']),text:z.string().min(1).max(2000),
   claim_type:z.enum(['interpretation','canon','npc_claim','mixed']),
   importance:z.number().int().min(0).max(3),unresolved:z.boolean(),
-  entity_ids:z.array(entityRef).max(8),source_memory_ids:z.array(z.uuid()).max(8),
-  replaces_memory_id:z.uuid().nullable(),
+  entity_ids:z.array(entityRef).max(8),source_memory_ids:z.array(uuid).max(8),
+  replaces_memory_id:uuid.nullable(),
   reason:z.string().min(1).max(400).nullable(),
 };
 export const wireMemory=z.strictObject(memoryFields);

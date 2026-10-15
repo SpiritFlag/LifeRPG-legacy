@@ -17,7 +17,7 @@ export function readOpenAiConfig(env:NodeJS.ProcessEnv):OpenAiConfig {
     model==='gpt-6.1-sol'?SOL_PRICE:null;
   if(!price)throw new Error('GM_PRICE_CARD_JSON is required for a different model');
   return {model,price,reasoning:z.enum(['low','medium','high','xhigh','max']).parse(env.GM_REASONING_EFFORT??'medium'),
-    maxInputTokens:integer(env,'GM_MAX_INPUT_TOKENS',16384,64000),maxOutputTokens:integer(env,'GM_MAX_OUTPUT_TOKENS',2048,16000)};
+    maxInputTokens:integer(env,'GM_MAX_INPUT_TOKENS',16384,64000),maxOutputTokens:integer(env,'GM_MAX_OUTPUT_TOKENS',16384,16384)};
 }
 export function costMicroUsd(price:PriceCard,input:number,cached:number,writes:number,output:number):number {
   const total=BigInt(input-cached-writes)*BigInt(price.input)+BigInt(cached)*BigInt(price.cached)+BigInt(writes)*BigInt(price.cache_write)+BigInt(output)*BigInt(price.output);

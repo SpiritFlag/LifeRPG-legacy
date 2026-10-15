@@ -4,6 +4,17 @@ import { lockGame } from './storage.ts';
 
 export const budgetLimits=z.object({lifetime:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   daily:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),monthly:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)}).strict();
+// Operating policy is separate from explicitly approved synthetic campaign caps.
+export function operatingMonthlyBudget(env:NodeJS.ProcessEnv):number {
+  return budgetLimits.shape.monthly.parse(Number(env.GM_OPERATING_MONTHLY_BUDGET_MICRO_USD??10000000));
+}
+/** Explicit operator setup only; preserves daily/lifetime/owner limits, ledgers and blocked jobs. */
+export async function configureOperatingMonthlyBudget(db:Database,monthly=operatingMonthlyBudget({})) {
+  const limit=budgetLimits.shape.monthly.parse(monthly);
+  await db.transaction(async tx=>{
+    await tx.query('UPDATE gm_budget SET monthly_limit=$1 WHERE id=true',[limit]);
+  });
+}
 export async function budgetUsage(tx:Queryable) {
   // Outstanding charges carry across UTC boundaries; settlement is booked when received.
   return (await tx.query(`SELECT

@@ -7,6 +7,7 @@
     "node": "24.x"
   },
   "scripts": {
+    "gm:preflight": "node --env-file-if-exists=.env.openai.local src/v2/openai-preflight.ts",
     "gm:synthetic": "node --env-file-if-exists=.env.openai.local src/v2/synthetic-openai.ts",
     "test:v2:openai": "node --test test/v2-openai.test.js test/v2-openai-schema.test.js",
     "dev:v2": "node --env-file-if-exists=.env.v2.local src/v2/local.ts",
@@ -42,6 +43,7 @@
     "@types/node": "24.10.0",
     "@types/pg": "8.15.6",
     "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "esbuild": "0.28.2",
     "playwright-core": "1.64.0",
     "typescript": "5.9.3"

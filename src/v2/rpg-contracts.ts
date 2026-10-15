@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 const text=z.string().min(1).max(1200),name=z.string().trim().min(1).max(80);
+// Share this node so the wire schema references the same UUID constraint once.
+export const uuid=z.uuid();
 export const entityRef=z.string().regex(/^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|@[a-z][a-z0-9_]{0,31})$/);
 const version=z.number().int().min(0).max(1000000);
 const number=z.number().int().min(-1000000).max(1000000);
@@ -21,7 +23,7 @@ export const operation=z.discriminatedUnion('op',[
   z.strictObject({op:z.literal('equip'),ref:entityRef,expected_version:version,slot:name.nullable()}),
   z.strictObject({op:z.literal('retire'),ref:entityRef,expected_version:version}),
   z.strictObject({op:z.literal('advance_time'),ticks:z.number().int().min(1).max(1000)}),
-  z.strictObject({op:z.literal('resolve_reinterpretation'),decision_id:z.uuid()}),
+  z.strictObject({op:z.literal('resolve_reinterpretation'),decision_id:uuid}),
 ]);
 export const scene=z.strictObject({title:name,text,dialogue:z.array(z.strictObject({speaker:entityRef.nullable(),text})).max(5),choices:z.array(z.strictObject({label:name,action:z.string().min(1).max(500)})).max(5)});
 export const rpgFields={

@@ -241,7 +241,7 @@ test('OpenAI adapter accepts RPG operations offline with unchanged model/reasoni
     const c=await f.worker.claim(),r=await gm.generate(c.context,new AbortController().signal);assert.equal(r.failure,undefined);
     await f.worker.complete(c,r);assert.equal((await f.result(receipt.operation_id)).status,'committed');
   }
-  assert.equal(calls,2);assert.equal((await f.game()).xp,3);assert.equal(gm.maxCost,61440);
+  assert.equal(calls,2);assert.equal((await f.game()).xp,3);assert.equal(gm.maxCost,204800);
   const huge=await gm.generate({operation_id:randomUUID(),kind:'action',input:{message:'가'.repeat(20000)},initialized:true,xp:3,memories:[],events:[],previous_decision:null,target_event_id:null},new AbortController().signal);
   assert.equal(huge.failure.code,'context_limit');assert.equal(huge.usage.cost,0);assert.equal(calls,2);
 });
