@@ -17,6 +17,10 @@ test('durable dispatch ceiling cannot be freed by settlement or an unknown respo
   await budget.take('first');await assert.rejects(()=>budget.take('second'));
   const broken=new DispatchGuard(61440,async()=>{throw new Error('disk');});
   await assert.rejects(()=>broken.take('first'));assert.equal(broken.calls,1);
+  const resumed=new DispatchGuard(61440,async()=>{},{calls:1,reserved_micro_usd:61440});
+  for(let i=0;i<4;i++)await resumed.take('resumed-'+i);
+  assert.equal(resumed.calls,5);assert.equal(resumed.reserved,307200);
+  await assert.rejects(()=>resumed.take('fifth-new'));
 });
 
 test('offline five-turn evaluation traverses actual adapter, worker, accounting and isolated DB; refuses rerun',async()=>{
@@ -48,4 +52,21 @@ test('provider failure stops campaign at one call and preserves unknown cost res
   assert.equal(r.turns[0].receipt.status,'retryable_error');assert.equal(r.turns[0].receipt.error_code,'gm_provider_temporary');
   assert.equal(r.attempts[0].actual_cost,null);assert.equal(Number(r.attempts[0].reserved_cost),61440);
   assert.equal(r.jobs[0].attempts,1);
+});
+
+test('resume inherits prior reservation and stops after four new turns without queueing fifth scenario',async()=>{
+  const dir=join(await mkdtemp(join(tmpdir(),'liferpg-campaign-resume-')),'evaluation');let calls=0;
+  const prior={calls:1,reserved_micro_usd:61440};
+  const r=await runEvaluation({dir,config:readOpenAiConfig({}),prior,transport:async(body,signal)=>{
+    calls++;const c=JSON.parse(body.input[0].content),p=proposal.parse((await new MockGm().generate(c,signal)).proposal);
+    return {status:200,body:{model:body.model,status:'completed',service_tier:'default',
+      usage:{input_tokens:100,output_tokens:100,total_tokens:200,input_tokens_details:{cached_tokens:0},output_tokens_details:{reasoning_tokens:0}},
+      output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({...p,question:p.question??null})}]}]}};
+  }});
+  assert.equal(calls,4);assert.equal(r.turns.length,4);assert.equal(r.jobs.length,4);
+  assert.ok(r.turns.every(t=>t.receipt.status==='committed'));
+  assert.equal(r.cumulative_reserved_micro_usd,307200);assert.equal(r.usage.budget_limit,438560);
+  assert.deepEqual(r.prior,prior);assert.deepEqual(r.unattempted_cases,[{case:5,request_id:'campaign-return'}]);
+  const entries=(await readFile(join(dir,'dispatch.jsonl'),'utf8')).trim().split('\n').map(s=>JSON.parse(s));
+  assert.deepEqual(entries.map(e=>e.call),[2,3,4,5]);
 });
