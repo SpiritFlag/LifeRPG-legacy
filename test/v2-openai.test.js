@@ -25,14 +25,15 @@ import {login,mcpClient} from '../scripts/client.js';
 
 const config=readOpenAiConfig({});
 const context={operation_id:randomUUID(),kind:'start',input:{message:'[SYNTHETIC]'},initialized:false,xp:0,memories:[],events:[],previous_decision:null,target_event_id:null};
-const wire={outcome:'commit',summary:'합성 판정',xp_delta:0,question:null,memories:[{kind:'identity',text:'합성 GM은 일관성과 자율성을 중시한다.'}]};
+const wire={outcome:'commit',summary:'합성 판정',xp_delta:0,question:null,memories:[{kind:'identity',text:'합성 GM은 일관성과 자율성을 중시한다.'}],
+  operations:[{op:'put',ref:'@hero',expected_version:0,visibility:'public',private_notes:null,body:{kind:'character',name:'합성 영웅',description:'테스트 모험가',level:1,stats:[],profession:null,location:null}}],reward_source:null,scene:null};
 const envelope=(changes={},p=wire)=>({model:config.model,status:'completed',service_tier:'default',
   usage:{input_tokens:1000,input_tokens_details:{cached_tokens:100,cache_write_tokens:200},output_tokens:100,output_tokens_details:{reasoning_tokens:40},total_tokens:1100},
   output:[{type:'reasoning',summary:[]},{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify(p)}]}],...changes});
 let pg,db;
 before(async()=>{
   pg=new PGlite();
-  for(const file of ['001-foundation.sql','002-openai-accounting.sql'])await pg.exec(await readFile(new URL(`../migrations/v2/${file}`,import.meta.url),'utf8'));
+  for(const file of ['001-foundation.sql','002-openai-accounting.sql','003-rpg.sql'])await pg.exec(await readFile(new URL(`../migrations/v2/${file}`,import.meta.url),'utf8'));
   db=scopedDatabase({query:(s,v)=>pg.query(s,v),transaction:fn=>pg.transaction(tx=>fn({query:(s,v)=>tx.query(s,v)}))});
 });
 after(async()=>pg.close());
@@ -101,7 +102,7 @@ test('local fake HTTP Responses endpoint validates strict request and cached/wri
     assert.equal(calls,1);assert.equal(sent.model,config.model);assert.equal(sent.reasoning.effort,'medium');
     assert.equal(sent.store,false);assert.equal(sent.service_tier,'default');assert.equal(sent.truncation,'disabled');
     assert.equal(sent.text.format.strict,true);assert.deepEqual(sent.text.format.schema,GM_OUTPUT_SCHEMA);
-    assert.deepEqual(GM_OUTPUT_SCHEMA.required,['outcome','summary','xp_delta','question','memories']);
+    assert.deepEqual(GM_OUTPUT_SCHEMA.required,['outcome','summary','xp_delta','question','memories','operations','reward_source','scene']);
     assert.equal(sent.tools,undefined);assert.equal(sent.previous_response_id,undefined);
     assert.equal(reply.proposal.question,undefined);assert.equal(reply.usage.cost,2910);
     assert.equal(reply.usage.details.reasoning_tokens,40);assert.equal(costMicroUsd(SOL_PRICE,1,1,0,0),1);
@@ -139,7 +140,7 @@ test('oversized context is rejected before HTTP; provider/transport failures exp
 
 test('actual adapter through worker commits once, records versioned price and real token counts',async()=>{
   let calls=0;
-  const f=fixture(async body=>{calls++;const c=JSON.parse(body.input[0].content);return {status:200,body:envelope({},c.kind==='start'?wire:{...wire,xp_delta:7,memories:[{kind:'episode',text:'합성 산책의 의미'}]})};});
+  const f=fixture(async body=>{calls++;const c=JSON.parse(body.input[0].content);return {status:200,body:envelope({},c.kind==='start'?wire:{...wire,operations:[],xp_delta:7,memories:[{kind:'episode',text:'합성 산책의 의미'}]})};});
   const start=await f.start();await f.worker.runOnce();assert.equal((await f.result(start.operation_id)).status,'committed');
   const input={request_id:'same-request',summary:'[SYNTHETIC] walk'};
   const r=await f.call('submit_observation',input);await f.worker.runOnce();
@@ -233,7 +234,7 @@ test('delete during real adapter generation discards output but settles cost, pu
 });
 
 test('OpenAI-derived memory inherits transitive provenance and is removed on deletion',async()=>{
-  const f=fixture(async body=>{const c=JSON.parse(body.input[0].content);return {status:200,body:envelope({},c.kind==='start'?wire:{...wire,memories:[{kind:'episode',text:'SYNTHETIC-EVIDENCE'}]})};});
+  const f=fixture(async body=>{const c=JSON.parse(body.input[0].content);return {status:200,body:envelope({},c.kind==='start'?wire:{...wire,operations:[],memories:[{kind:'episode',text:'SYNTHETIC-EVIDENCE'}]})};});
   await f.start();await f.worker.runOnce();
   const r=await f.call('submit_observation',{request_id:randomUUID(),summary:'SYNTHETIC-ROOT'});await f.worker.runOnce();
   const source=(await db.query("SELECT payload_id FROM memories WHERE kind='episode'")).rows[0].payload_id;

@@ -6,13 +6,13 @@
 
 ## 모델과 연결
 
-공식 API 모델 ID는 `gpt-6.1-sol`. Responses API와 Structured Outputs를 지원한다. reasoning은 `low`, `medium`, `high`, `xhigh`, `max`를 지원한다. **사용자 결정에 따라 기본값은 `medium`**이다. 계정의 모델 접근 권한·실제 지연·판정 품질은 아직 실호출로 검증하지 않았다. [공식 모델 문서](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
+공식 API 모델 ID는 `gpt-6.1-sol`. Responses API와 Structured Outputs를 지원한다. reasoning은 `low`, `medium`, `high`, `xhigh`, `max`를 지원한다. **사용자 결정에 따라 기본값은 `medium`**이다. 모델 접근과 두 합성 사례의 지연·판정은 이후 [첫 실행 기록](V2-OPENAI-FIRST-RUN.md)에서 확인했다. 확장된 4단계 RPG 계약의 실모델 품질은 아직 검증하지 않았다. [공식 모델 문서](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
 
 Node 24 내장 `fetch`로 `https://api.openai.com/v1/responses`에 요청한다. 새 SDK/에이전트 프레임워크는 추가하지 않았다. 전송 계층을 주입할 수 있어 테스트는 합성 응답 또는 loopback 가짜 HTTP 서버만 사용한다. 실제 전송은 `createLiveOpenAiGm` 경계에만 있다. HTTP redirect를 허용하지 않고 오류 응답 원문·키·프롬프트를 로그에 남기지 않는다.
 
 요청은 `text.format.type=json_schema`, `strict=true`, 모든 속성이 required인 닫힌 schema를 사용한다. 선택 질문은 wire에서 null로 표현하고 내부 계약에 맞게 변환한다. API의 형식 검증에 더해 기존 Zod 판정 규칙과 서버 무결성 검증을 다시 거친다. [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
 
-현재 판정 범위는 commit / clarify / no_change, summary, XP 증감, 질문, 다섯 종류의 기억이다. 직업·스킬·아이템·NPC의 완전한 구조화 모델은 4단계 범위다. 서버가 memory/input/event의 출처를 전파하며 모델이 출처 목록을 결정하지 않는다. `target_event_id`를 별도로 전달해 참고 문맥의 사건과 실제 판정 대상을 구분한다.
+3단계 최초 판정 범위는 commit / clarify / no_change, summary, XP 증감, 질문, 다섯 종류의 기억이었다. 이후 4단계에서 구조화된 RPG operations·reward_source·공개 scene을 추가했다. 최신 계약과 문맥 크기 제약은 [V2-RPG.md](V2-RPG.md)를 따른다. 서버가 실제 읽은 memory/input/event/RPG의 출처를 전파하며 모델이 출처 목록을 결정하지 않는다. `target_event_id`를 별도로 전달해 참고 문맥의 사건과 실제 판정 대상을 구분한다.
 
 `store:false`, `stream:false`, `service_tier:default`, `truncation:disabled`를 설정한다. 도구 실행, previous_response_id, provider 대화 세션에 의존하지 않는다. 매 호출 DB에서 정체성·기억·현재 게임·사건·이전 판정을 읽어 전송한다. 입력 JSON과 기억은 지시가 아닌 데이터로 취급하도록 서버 헌장을 분리했다.
 

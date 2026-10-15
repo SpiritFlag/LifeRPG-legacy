@@ -12,6 +12,10 @@ export class MockGm implements GmAdapter {
       outcome:context.kind==='appeal'?'no_change':'commit',summary,
       xp_delta:['observation','answer'].includes(context.kind)?5:0,
       memories:context.kind==='appeal'?[]:[{kind:context.kind==='start'?'identity':'episode',text:'[합성 기억] 전달받은 맥락을 참고했습니다.'}],
+      operations:context.kind==='start'?[
+        {op:'put',ref:'@village',expected_version:0,visibility:'public',private_notes:null,body:{kind:'place',name:'합성 마을',description:'검증용 시작 장소',parent:null}},
+        {op:'put',ref:'@hero',expected_version:0,visibility:'public',private_notes:null,body:{kind:'character',name:'합성 모험가',description:'검증용 캐릭터',level:1,stats:[{name:'의지',value:1}],profession:null,location:'@village'}},
+      ]:[],reward_source:null,scene:null,
     },usage:{input_tokens:0,output_tokens:0,cost:0}};
   }
 }

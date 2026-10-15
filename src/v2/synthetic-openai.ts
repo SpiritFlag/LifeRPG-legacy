@@ -31,6 +31,8 @@ async function main() {
     if(isNew)await pg.exec(await readFile(new URL('../../migrations/v2/001-foundation.sql',import.meta.url),'utf8'));
     if(!(await pg.query("SELECT 1 FROM information_schema.tables WHERE table_schema='liferpg_v2' AND table_name='gm_budget'")).rows.length)
       await pg.exec(await readFile(new URL('../../migrations/v2/002-openai-accounting.sql',import.meta.url),'utf8'));
+    if(!(await pg.query("SELECT 1 FROM information_schema.tables WHERE table_schema='liferpg_v2' AND table_name='rpg_entities'")).rows.length)
+      await pg.exec(await readFile(new URL('../../migrations/v2/003-rpg.sql',import.meta.url),'utf8'));
     const db=scopedDatabase({query:async(s,v)=>pg.query(s,v),transaction:fn=>pg.transaction(tx=>fn({query:async(s,v)=>tx.query(s,v)}))});
     const journal=await openDeletionJournal(db,resolve('.local/v2-openai-synthetic-deletions.json'),isNew);
     const identity={subject:'synthetic-openai-only',scopes:V2_SCOPES};

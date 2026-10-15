@@ -59,6 +59,7 @@ export async function purgeSources(tx:Queryable,owner:string,ids:string[],delete
   await tx.query("UPDATE questions SET state='expired' WHERE owner_id=$1 AND (payload_id=ANY($2::uuid[]) OR request_id=ANY($3::uuid[]))",[owner,affected,requests]);
   await tx.query('UPDATE memories SET active=false WHERE owner_id=$1 AND payload_id=ANY($2::uuid[])',[owner,affected]);
   await tx.query('UPDATE decisions SET needs_reinterpretation=true WHERE owner_id=$1 AND (payload_id=ANY($2::uuid[]) OR event_id=ANY($3::uuid[]))',[owner,affected,ids]);
+  await tx.query('UPDATE rpg_entities SET needs_reinterpretation=true WHERE owner_id=$1 AND (public_payload=ANY($2::uuid[]) OR private_payload=ANY($2::uuid[]))',[owner,affected]);
   await tx.query('DELETE FROM payloads WHERE owner_id=$1 AND id=ANY($2::uuid[])',[owner,affected]);
   return affected.length;
 }

@@ -4,11 +4,14 @@ import { lockGame, loadPayload, payloadRoots, savePayload, activeEvent } from '.
 import type { Database, Queryable } from './storage.ts';
 import { canReserve } from './budget.ts';
 import type { PriceCard } from './openai-config.ts';
+import { readRpg,applyRpg,effectiveStats } from './rpg.ts';
 
 export type GmContext={
   operation_id:string; kind:string; input:Record<string,unknown>; initialized:boolean; xp:number;
   memories:{kind:string;body:unknown}[]; events:{id:string;version:number;body:unknown}[];
   previous_decision:unknown;target_event_id:string|null;
+  reality?:{status:string;event_id:string|null};rpg?:unknown;world_tick?:number;
+  clarification_history?:{input:Record<string,unknown>;question:unknown}[];
 };
 export type GmUsage={input_tokens:number;output_tokens:number;cost:number|null;details?:{
   cached_tokens:number;cache_write_tokens:number;reasoning_tokens:number;total_tokens:number;returned_model:string;service_tier:string;
@@ -21,6 +24,7 @@ export interface GmAdapter {
 export type Claim={
   jobId:string;owner:string;requestId:string;attemptId:string;fencing:number;revision:number;epoch:number;
   roots:string[];eventVersions:{id:string;version:number}[];context:GmContext;
+  continuationIds:string[];previousDecisionId:string|null;
 };
 
 export class GmWorker {
@@ -55,12 +59,28 @@ export class GmWorker {
         await tx.query("UPDATE requests SET status='invalidated' WHERE id=$1",[job.request_id]);
         return null;
       }
-      if(!game.initialized && job.kind!=='start') {
+      const ancestors=[];let origin=job;
+      while(origin.kind==='answer'&&ancestors.length<8) {
+        const parent=(await tx.query(`SELECT r.*,q.payload_id AS question_payload FROM questions q JOIN requests r ON r.id=q.request_id
+          WHERE q.owner_id=$1 AND q.id=$2`,[owner,origin.reference_id])).rows[0];
+        if(!parent)break;
+        ancestors.unshift(parent);origin=parent;
+      }
+      if(origin.kind==='answer') {
+        await tx.query("UPDATE jobs SET state='failed' WHERE id=$1",[job.id]);
+        await tx.query("UPDATE requests SET status='failed',error_code='clarification_limit' WHERE id=$1",[job.request_id]);return null;
+      }
+      const gameKind=origin.kind;
+      const cleanInput=(kind:string,v:Record<string,unknown>)=>kind==='observation'?
+        {summary:v.summary,occurred_on:v.occurred_on??null,timezone:v.timezone,unknowns:v.unknowns}:{message:v.message??''};
+      const clarificationHistory=[];
+      for(const ancestor of ancestors)clarificationHistory.push({input:cleanInput(ancestor.kind,await loadPayload(tx,owner,ancestor.input_payload)??{}),question:await loadPayload(tx,owner,ancestor.question_payload)});
+      if(!game.initialized && gameKind!=='start') {
         await tx.query("UPDATE jobs SET state='blocked' WHERE id=$1",[job.id]);
         await tx.query("UPDATE requests SET status='needs_input',error_code='start_required' WHERE id=$1",[job.request_id]);
         return null;
       }
-      if(game.initialized && job.kind==='start') {
+      if(game.initialized && gameKind==='start') {
         await tx.query("UPDATE jobs SET state='completed' WHERE id=$1",[job.id]);
         await tx.query("UPDATE requests SET status='no_change' WHERE id=$1",[job.request_id]);
         return null;
@@ -76,15 +96,18 @@ export class GmWorker {
         WHERE m.owner_id=$1 AND m.active ORDER BY (m.kind='identity') DESC,m.created_at DESC,m.id LIMIT 20`,[owner])).rows;
       let previous=null;
       let previousPayload:string|null=null;
-      if(job.kind==='appeal') {
-        const d=(await tx.query('SELECT * FROM decisions WHERE owner_id=$1 AND id=$2',[owner,job.reference_id])).rows[0];
+      if(gameKind==='appeal') {
+        const d=(await tx.query('SELECT * FROM decisions WHERE owner_id=$1 AND id=$2',[owner,origin.reference_id])).rows[0];
         if(!d?.payload_id || d.needs_reinterpretation || (await tx.query('SELECT 1 FROM decisions WHERE owner_id=$1 AND previous_id=$2',[owner,d?.id])).rows.length) {
           await tx.query("UPDATE jobs SET state='cancelled' WHERE id=$1",[job.id]);
           await tx.query("UPDATE requests SET status='invalidated',error_code='decision_unavailable' WHERE id=$1",[job.request_id]);return null;
         }
         previousPayload=d.payload_id;previous=await loadPayload(tx,owner,previousPayload);
       }
-      const payloadIds=[job.input_payload,...memories.map(m=>m.payload_id),...(previousPayload?[previousPayload]:[])];
+      const rpg=await readRpg(tx,owner);
+      const pending=(await tx.query('SELECT id,xp_delta FROM decisions WHERE owner_id=$1 AND needs_reinterpretation',[owner])).rows;
+      const rpgPayloads=rpg.filter(e=>!e.retired&&!e.needs_reinterpretation).flatMap(e=>[e.public_payload,e.private_payload].filter((id):id is string=>!!id));
+      const payloadIds=[job.input_payload,...ancestors.flatMap(a=>[a.input_payload,a.question_payload]).filter(Boolean),...memories.map(m=>m.payload_id),...(previousPayload?[previousPayload]:[]),...rpgPayloads];
       const roots=[...new Set([...job.event_ids,...await payloadRoots(tx,owner,payloadIds)])] as string[];
       const events=[];
       for(const id of roots) {
@@ -92,7 +115,7 @@ export class GmWorker {
         const v=(await tx.query('SELECT payload_id FROM event_versions WHERE owner_id=$1 AND event_id=$2 AND version=$3',[owner,id,e.version])).rows[0];
         events.push({id,version:e.version,body:await loadPayload(tx,owner,v?.payload_id)});
       }
-      if(roots.length>50 || JSON.stringify({input,memories,events,previous}).length>48000) {
+      if(roots.length>50 || JSON.stringify({input,clarificationHistory,memories,events,previous,rpg}).length>48000) {
         await tx.query("UPDATE jobs SET state='failed' WHERE id=$1",[job.id]);
         await tx.query("UPDATE requests SET status='failed',error_code='context_limit' WHERE id=$1",[job.request_id]);
         return null;
@@ -107,8 +130,15 @@ export class GmWorker {
       await tx.query(`INSERT INTO attempts(id,owner_id,job_id,fencing,state,reserved_cost,model,context_manifest)
         VALUES($1,$2,$3,$4,'reserved',$5,$6,$7)`,[attemptId,owner,job.id,fencing,this.gm.maxCost,this.gm.model,JSON.stringify({game_revision:game.revision,privacy_epoch:game.privacy_epoch,event_versions:eventVersions,payload_ids:payloadIds})]);
       if(this.gm.provider==='openai')await tx.query("UPDATE attempts SET provider='openai',price_card=$2 WHERE id=$1",[attemptId,JSON.stringify(this.gm.priceCard)]);
+      const target=job.event_ids[0]??null;
+      // Only factual fields / player message cross into GM context. Retry/capture flags are transport policy.
+      const gmInput=cleanInput(job.kind,input);
       return {jobId:job.id,owner,requestId:job.request_id,attemptId,fencing,revision:game.revision,epoch:game.privacy_epoch,roots,eventVersions,
-        context:{operation_id:job.request_id,kind:job.kind,input,initialized:game.initialized,xp:Number(game.xp),memories:memories.map(({kind,body})=>({kind,body})),events,previous_decision:previous,target_event_id:job.event_ids[0]??null}};
+        continuationIds:ancestors.map(a=>a.id),previousDecisionId:gameKind==='appeal'?origin.reference_id:null,
+        context:{operation_id:job.request_id,kind:gameKind,input:gmInput,initialized:game.initialized,xp:Number(game.xp),memories:memories.map(({kind,body})=>({kind,body})),events,previous_decision:previous,target_event_id:target,
+          ...(clarificationHistory.length?{clarification_history:clarificationHistory}:{}),
+          reality:{status:target?'recorded':'not_applicable',event_id:target},world_tick:Number(game.world_tick),
+          rpg:{entities:rpg.filter(e=>!e.retired).map(e=>({id:e.id,kind:e.kind,version:e.version,visibility:e.visibility,needs_reinterpretation:e.needs_reinterpretation,body:e.needs_reinterpretation?null:e.body,private_notes:e.needs_reinterpretation?null:e.private_notes})),pending_reinterpretations:pending}}};
     });
   }
 
@@ -179,8 +209,7 @@ export class GmWorker {
       const p=parsed.data;
       const req=(await tx.query('SELECT * FROM requests WHERE id=$1 AND owner_id=$2',[c.requestId,c.owner])).rows[0];
       const eventId=req.event_ids[0]??null;
-      // Award only a target event's entitlement; context roots cannot mint life XP.
-      if(p.xp_delta!==0 && !eventId) {await this.retry(tx,c,'invalid_reward_source');return {status:'retryable_error'};}
+      if(c.context.kind==='start'&&p.xp_delta!==0) {await this.retry(tx,c,'invalid_reward_source');return {status:'retryable_error'};}
       if(p.outcome==='clarify') {
         const questionId=randomUUID();
         const body={question:{question_id:questionId,text:p.question}};
@@ -188,36 +217,46 @@ export class GmWorker {
         await tx.query("INSERT INTO questions(id,owner_id,request_id,payload_id,state) VALUES($1,$2,$3,$4,'open')",[questionId,c.owner,c.requestId,payload]);
         await tx.query("UPDATE requests SET status='needs_input',result_payload=$2 WHERE id=$1",[c.requestId,payload]);
       } else {
-        const duplicate=eventId && req.kind!=='appeal' && (await tx.query('SELECT 1 FROM reward_entitlements WHERE owner_id=$1 AND event_id=$2',[c.owner,eventId])).rows.length;
+        const duplicate=eventId && c.context.kind!=='appeal' && (await tx.query('SELECT 1 FROM reward_entitlements WHERE owner_id=$1 AND event_id=$2',[c.owner,eventId])).rows.length;
         const delta=duplicate?0:p.xp_delta;
         const nextXp=BigInt(game.xp)+BigInt(delta);
         if(nextXp<0n || nextXp>BigInt(Number.MAX_SAFE_INTEGER)) {await this.retry(tx,c,'invalid_balance');return {status:'retryable_error'};}
         const decisionId=randomUUID();
         const currentVersion=eventId?c.eventVersions.find(e=>e.id===eventId)?.version:null;
-        if(req.kind==='appeal' && (await tx.query('SELECT 1 FROM decisions WHERE owner_id=$1 AND previous_id=$2',[c.owner,req.reference_id])).rows.length) {
+        if(c.previousDecisionId && (await tx.query('SELECT 1 FROM decisions WHERE owner_id=$1 AND previous_id=$2',[c.owner,c.previousDecisionId])).rows.length) {
           await this.retry(tx,c,'decision_superseded');return {status:'retryable_error'};
         }
-        const publicResult={decision_id:decisionId,game_revision:game.revision+1,player_result:{summary:duplicate?'이미 반영된 합성 사건입니다.':p.summary,changes:delta?[{kind:'xp',delta}]:[]}};
+        let rpgResult;
+        try {
+          rpgResult=duplicate?null:await applyRpg(tx,c.owner,p,{kind:c.context.kind,requestId:c.requestId,roots:c.roots,eventId,xpDelta:delta,worldTick:Number(game.world_tick)});
+        } catch(error) {
+          if(!(error instanceof DomainError))throw error;
+          await this.retry(tx,c,error.code);return {status:'retryable_error'};
+        }
+        const publicResult={decision_id:decisionId,game_revision:game.revision+1,player_result:{
+          summary:duplicate?'이 사건의 기본 판정은 이미 반영되었습니다.':p.outcome==='no_change'?'게임 상태 변경이 없습니다.':'게임 판정이 확정되었습니다.',
+          changes:[...(delta?[{kind:'xp',delta,balance:Number(nextXp)}]:[]),...(rpgResult?.changes??[])],
+          fiction:rpgResult?.scene??null,world_tick:rpgResult?.world_tick??Number(game.world_tick),effective_stats:rpgResult?.effective_stats??effectiveStats(await readRpg(tx,c.owner))}};
         const payload=await savePayload(tx,c.owner,'decision',publicResult,c.roots);
         await tx.query(`INSERT INTO decisions(id,owner_id,request_id,previous_id,event_id,event_version,xp_delta,payload_id)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[decisionId,c.owner,c.requestId,req.kind==='appeal'?req.reference_id:null,eventId,currentVersion,delta,payload]);
-        if(eventId && !duplicate && req.kind!=='appeal') await tx.query('INSERT INTO reward_entitlements(owner_id,event_id,decision_id) VALUES($1,$2,$3)',[c.owner,eventId,decisionId]);
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[decisionId,c.owner,c.requestId,c.previousDecisionId,eventId,currentVersion,delta,payload]);
+        if(eventId && !duplicate && c.context.kind!=='appeal') await tx.query('INSERT INTO reward_entitlements(owner_id,event_id,decision_id) VALUES($1,$2,$3)',[c.owner,eventId,decisionId]);
         if(!duplicate) for(const memory of p.memories) {
           const content=await savePayload(tx,c.owner,memory.kind,{text:memory.text},c.roots);
           const version=Number((await tx.query('SELECT COALESCE(max(version),0)+1 AS version FROM memories WHERE owner_id=$1 AND kind=$2',[c.owner,memory.kind])).rows[0].version);
           if(memory.kind==='identity') await tx.query("UPDATE memories SET active=false WHERE owner_id=$1 AND kind='identity'",[c.owner]);
           await tx.query('INSERT INTO memories(id,owner_id,kind,version,payload_id) VALUES($1,$2,$3,$4,$5)',[randomUUID(),c.owner,memory.kind,version,content]);
         }
-        await tx.query('UPDATE games SET revision=revision+1,xp=$2,initialized=initialized OR $3 WHERE owner_id=$1',[c.owner,nextXp.toString(),req.kind==='start']);
+        await tx.query('UPDATE games SET revision=revision+1,xp=$2,initialized=initialized OR $3 WHERE owner_id=$1',[c.owner,nextXp.toString(),c.context.kind==='start']);
         await tx.query('UPDATE requests SET status=$2,result_payload=$3 WHERE id=$1',[c.requestId,duplicate||p.outcome==='no_change'?'no_change':'committed',payload]);
-        if(req.kind==='start') {
+        if(c.context.kind==='start') {
           await tx.query("UPDATE jobs SET state='queued' WHERE owner_id=$1 AND state='blocked' AND request_id IN (SELECT id FROM requests WHERE owner_id=$1 AND error_code='start_required')",[c.owner]);
           await tx.query("UPDATE requests SET status='queued',error_code=NULL WHERE owner_id=$1 AND error_code='start_required'",[c.owner]);
         }
-        if(req.kind==='answer') {
-          await tx.query(`UPDATE requests SET status='committed',result_payload=$3 WHERE owner_id=$1 AND id=(SELECT request_id FROM questions WHERE owner_id=$1 AND id=$2)`,[c.owner,req.reference_id,payload]);
-        }
       }
+      // Polling any earlier question follows the latest question or final canonical receipt.
+      if(c.continuationIds.length)await tx.query(`UPDATE requests SET status=r.status,result_payload=r.result_payload FROM requests r
+        WHERE requests.owner_id=$1 AND requests.id=ANY($2::uuid[]) AND r.id=$3`,[c.owner,c.continuationIds,c.requestId]);
       await tx.query("UPDATE jobs SET state='completed',lease_until=NULL WHERE id=$1 AND fencing=$2",[c.jobId,c.fencing]);
       return {status:'completed'};
     });

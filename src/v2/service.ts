@@ -3,6 +3,7 @@ import { observation, interaction, revision, deletion, read, DomainError } from 
 import type { Identity } from './contracts.ts';
 import { digest, lockGame, activeEvent, savePayload, loadPayload, payloadRoots, purgeSources } from './storage.ts';
 import type { Database, Queryable } from './storage.ts';
+import { readRpg,publicRpg,effectiveStats } from './rpg.ts';
 
 const schemas={submit_observation:observation,interact_with_gm:interaction,revise_real_record:revision,delete_real_record:deletion,read_liferpg:read};
 export type ToolName=keyof typeof schemas;
@@ -16,8 +17,10 @@ export async function requestResult(tx:Queryable,owner:string,id:string) {
   if(!row) throw new DomainError('not_found');
   const result=await loadPayload(tx,owner,row.result_payload);
   const deletion=(await tx.query('SELECT live_status,backup_status,payload_count,privacy_epoch FROM deletions WHERE owner_id=$1 AND request_id=$2',[owner,id])).rows[0];
+  const live=row.event_ids.length?(await tx.query('SELECT id FROM events WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND deleted_at IS NULL',[owner,row.event_ids])).rows.map(e=>e.id):[];
   return {operation_id:row.id,status:row.status,event_ids:row.status==='deleted'?[]:row.event_ids,
     ...(result?result:{}),...(deletion?{deletion}:{}),...(row.error_code?{error_code:row.error_code}:{}),
+    reality:{status:row.kind==='delete'||(row.event_ids.length&&!live.length)?'deleted':row.kind==='revise'?'corrected':live.length?'recorded':'not_applicable',event_ids:live},
     ...(['queued','running','retryable_error'].includes(row.status)?{retry_after_ms:1000}:{})};
 }
 export async function enqueue(tx:Queryable,owner:string,requestId:string) {
@@ -170,8 +173,12 @@ export class LifeRpgService {
           ORDER BY e.id LIMIT $4`,[owner,input.cursor??null,input.query??null,input.limit+1])).rows;
         return {status:'ok',records:rows.slice(0,input.limit),next_cursor:rows.length>input.limit?rows[input.limit-1].id:null};
       }
-      if(input.view==='game') return {status:'ok',mode:this.mode,initialized:game?.initialized??false,revision:game?.revision??0,xp:Number(game?.xp??0),
-        reinterpretation_pending:(await tx.query('SELECT count(*)::integer AS n FROM decisions WHERE owner_id=$1 AND needs_reinterpretation',[owner])).rows[0].n};
+      if(input.view==='game') {
+        const entities=await readRpg(tx,owner);
+        return {status:'ok',mode:this.mode,initialized:game?.initialized??false,revision:game?.revision??0,xp:Number(game?.xp??0),world_tick:Number(game?.world_tick??0),
+          entities:publicRpg(entities),effective_stats:effectiveStats(entities),entities_pending_reinterpretation:entities.filter(e=>!e.retired&&e.needs_reinterpretation).length,
+          reinterpretation_pending:(await tx.query('SELECT count(*)::integer AS n FROM decisions WHERE owner_id=$1 AND needs_reinterpretation',[owner])).rows[0].n};
+      }
       return {status:'ok',mode:this.mode,initialized:game?.initialized??false,automatic_capture_paused:game?.auto_capture_paused??false,
         jobs:(await tx.query('SELECT state,count(*)::integer AS count FROM jobs WHERE owner_id=$1 GROUP BY state',[owner])).rows};
     });

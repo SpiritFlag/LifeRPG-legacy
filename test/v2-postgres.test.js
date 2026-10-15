@@ -52,7 +52,7 @@ test('real local PostgreSQL: independent connections, locks, lease recovery and 
     try {await admin.query('CREATE DATABASE liferpg_v2_test');} finally {await admin.end();}
     const url=`postgresql://v2test:${password}@127.0.0.1:${port}/liferpg_v2_test`;
     const migration=new pg.Client({connectionString:url});await migration.connect();
-    try {for(const file of ['001-foundation.sql','002-openai-accounting.sql'])await migration.query(await readFile(new URL(`../migrations/v2/${file}`,import.meta.url),'utf8'));}
+    try {for(const file of ['001-foundation.sql','002-openai-accounting.sql','003-rpg.sql'])await migration.query(await readFile(new URL(`../migrations/v2/${file}`,import.meta.url),'utf8'));}
     finally {await migration.end();}
     rawA=connectDatabase(url);rawB=connectDatabase(url);
     const a=scopedDatabase(rawA),b=scopedDatabase(rawB);
@@ -93,11 +93,32 @@ test('real local PostgreSQL: independent connections, locks, lease recovery and 
       const payload=(await a.query('SELECT id FROM payloads WHERE owner_id=$1 LIMIT 1',[identity.subject])).rows[0].id;
       await assert.rejects(()=>a.query("INSERT INTO memories(id,owner_id,kind,payload_id) VALUES($1,$2,'summary',$3)",[randomUUID(),other,payload]),e=>e.code==='23503');
     });
+    await t.test('RPG world rewards commit once across connections and duplicate source rejects the whole second turn',async()=>{
+      const player={subject:randomUUID(),scopes:V2_SCOPES};
+      const call=(name,input)=>serviceA.execute(name,input,player);
+      await call('interact_with_gm',{request_id:randomUUID(),kind:'start',message:'synthetic RPG race'});
+      const birth=await workerA.claim(),gm=new MockGm(),initial=await gm.generate(birth.context,new AbortController().signal);
+      initial.proposal.operations.push({op:'put',ref:'@event',expected_version:0,visibility:'public',private_notes:null,
+        body:{kind:'world_event',name:'합성 구조 사건',description:'SYNTHETIC',status:'resolved',location:null,participants:[]}});
+      await workerA.complete(birth,initial);
+      const source=(await call('read_liferpg',{view:'game'})).entities.find(e=>e.kind==='world_event').id;
+      await Promise.all([serviceA,serviceB].map(s=>s.execute('interact_with_gm',{request_id:randomUUID(),kind:'action',message:'synthetic source reward'},player)));
+      const claims=await Promise.all([workerA.claim(),workerB.claim()]);assert.equal(claims.filter(Boolean).length,1);
+      const winner=claims.find(Boolean),reply={proposal:{outcome:'commit',summary:'synthetic',xp_delta:9,memories:[],reward_source:source,scene:null,operations:[{op:'advance_time',ticks:1}]},usage:{cost:0,input_tokens:0,output_tokens:0}};
+      const commits=await Promise.all([workerA.complete(winner,reply),workerB.complete(winner,reply)]);
+      assert.equal(commits.filter(r=>r.status==='completed').length,1);
+      const next=await workerB.claim();await workerB.complete(next,reply);
+      assert.equal((await call('read_liferpg',{view:'request',operation_id:next.requestId})).error_code,'rpg_reward_already_claimed');
+      const game=await call('read_liferpg',{view:'game'});assert.equal(game.xp,9);assert.equal(game.world_tick,1);
+      assert.equal((await a.query('SELECT count(*)::int AS n FROM rpg_reward_claims WHERE owner_id=$1',[player.subject])).rows[0].n,1);
+      await a.query("UPDATE jobs SET state='cancelled' WHERE owner_id=$1 AND state='queued'",[player.subject]);
+    });
     await t.test('two independent workers cannot overspend one shared OpenAI budget across owners',async()=>{
       const config=readOpenAiConfig({});
       const gm=new OpenAiGm(config,async()=>({status:200,body:{model:config.model,status:'completed',service_tier:'default',
         usage:{input_tokens:100,output_tokens:20,total_tokens:120,input_tokens_details:{cached_tokens:0,cache_write_tokens:0},output_tokens_details:{reasoning_tokens:10}},
-        output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({outcome:'commit',summary:'합성 시작',xp_delta:0,question:null,memories:[]})}]}]}}));
+        output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({outcome:'commit',summary:'합성 시작',xp_delta:0,question:null,memories:[],reward_source:null,scene:null,
+          operations:[{op:'put',ref:'@hero',expected_version:0,visibility:'public',private_notes:null,body:{kind:'character',name:'합성 영웅',description:'synthetic',level:1,stats:[],profession:null,location:null}}]})}]}]}}));
       await configureBudget(a,{lifetime:gm.maxCost,daily:gm.maxCost,monthly:gm.maxCost});
       for(const service of [serviceA,serviceB])await service.execute('interact_with_gm',{request_id:randomUUID(),kind:'start',message:'synthetic budget race'},{subject:randomUUID(),scopes:V2_SCOPES});
       const workers=[new GmWorker(a,gm),new GmWorker(b,gm)];
