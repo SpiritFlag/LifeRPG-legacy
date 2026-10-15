@@ -10,6 +10,7 @@ import {randomUUID} from 'node:crypto';
 import {createServer} from 'node:http';
 import {PGlite} from '@electric-sql/pglite';
 import {OpenAiGm,createLiveOpenAiGm,GM_OUTPUT_SCHEMA} from '../src/v2/openai-gm.ts';
+import {measureSyntheticGm} from '../src/v2/synthetic-metrics.ts';
 import {readOpenAiConfig,reservation,costMicroUsd,SOL_PRICE} from '../src/v2/openai-config.ts';
 import {GmWorker} from '../src/v2/worker.ts';
 import {LifeRpgService} from '../src/v2/service.ts';
@@ -55,6 +56,22 @@ test('configuration defaults to Sol medium, explicit price required on model cha
   assert.throws(()=>readOpenAiConfig({GM_MAX_INPUT_TOKENS:'500000'}));
   assert.throws(()=>createLiveOpenAiGm(config,{OPENAI_API_KEY:'synthetic-not-a-key'}),/disabled/);
   assert.throws(()=>createLiveOpenAiGm(config,{LIFERPG_ALLOW_PAID_SYNTHETIC:'I_APPROVE_PAID_SYNTHETIC'}),/OPENAI_API_KEY/);
+});
+
+test('synthetic timing uses operation_id without input request_id and cannot break or retry transport',async()=>{
+  assert.equal(context.input.request_id,undefined);
+  const samples=[];let calls=0;
+  const gm=new OpenAiGm(config,async()=>{calls++;return {status:200,body:envelope()};});
+  const measured=measureSyntheticGm(gm,s=>samples.push(s));
+  const reply=await measured.generate(context,signal());
+  assert.equal(reply.failure,undefined);assert.equal(calls,1);
+  assert.equal(samples[0].operation_id,context.operation_id);assert.equal(samples[0].api_requests,1);
+  assert.equal(samples[0].http_status,200);assert.ok(samples[0].http_elapsed_ms>=0);
+  await measureSyntheticGm(gm,()=>{throw new Error('synthetic sink failure');}).generate(context,signal());
+  assert.equal(calls,2);
+  const failed=new OpenAiGm(config,async()=>{calls++;return {status:403,body:null};});
+  const result=await measureSyntheticGm(failed,s=>samples.push(s)).generate(context,signal());
+  assert.equal(calls,3);assert.equal(result.failure.code,'gm_provider_rejected');assert.equal(samples[1].http_status,403);
 });
 
 test('synthetic CLI dry-run needs no key/DB and --execute without approval fails before creating data',async()=>{

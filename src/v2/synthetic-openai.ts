@@ -11,6 +11,7 @@ import { LifeRpgService } from './service.ts';
 import { GmWorker } from './worker.ts';
 import { V2_SCOPES } from './contracts.ts';
 import { openDeletionJournal } from './privacy.ts';
+import { measureSyntheticGm } from './synthetic-metrics.ts';
 
 async function main() {
   const env=process.env,config=readOpenAiConfig(env);
@@ -37,7 +38,8 @@ async function main() {
     await setOwnerBudget(db,identity.subject,limits.lifetime);
     await resumeBudgetJobs(db,identity.subject);
     const service=new LifeRpgService(db,journal.sync,'openai');
-    const worker=new GmWorker(db,gm,{leaseMs:30000,timeoutMs:120000});
+    const measured=measureSyntheticGm(gm,sample=>console.info(JSON.stringify({type:'synthetic_gm_measurement',...sample})));
+    const worker=new GmWorker(db,measured,{leaseMs:30000,timeoutMs:120000});
     const cases=[
       {tool:'interact_with_gm' as const,input:{request_id:'synthetic-openai-start-v1',kind:'start',message:'[SYNTHETIC TEST] 가상 플레이어와 작은 판타지 세계를 시작합니다. 현실 인물 정보는 없습니다.'}},
       {tool:'submit_observation' as const,input:{request_id:'synthetic-openai-walk-v1',summary:'[SYNTHETIC TEST] 가상 평가용 플레이어가 20분간 걸었습니다.',occurred_on:'2026-10-15',timezone:'Asia/Seoul'}},

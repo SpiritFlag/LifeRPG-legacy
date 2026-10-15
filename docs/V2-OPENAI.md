@@ -2,6 +2,8 @@
 
 2026-10-15 · 구현 및 무과금 검증. 실제 OpenAI 요청, 운영 DB 변경, 배포는 수행하지 않았다.
 
+이후 사용자가 승인한 첫 합성 실호출은 2회 완료했다. 계측 오류와 예약 정리, 실제 사용량·판정·발견한 품질 문제는 [첫 실행 및 재개 기록](V2-OPENAI-FIRST-RUN.md)을 따른다. 아래의 무과금 검증 수치는 구현 완료 시점 기록이다.
+
 ## 모델과 연결
 
 공식 API 모델 ID는 `gpt-6.1-sol`. Responses API와 Structured Outputs를 지원한다. reasoning은 `low`, `medium`, `high`, `xhigh`, `max`를 지원한다. **사용자 결정에 따라 기본값은 `medium`**이다. 계정의 모델 접근 권한·실제 지연·판정 품질은 아직 실호출로 검증하지 않았다. [공식 모델 문서](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
