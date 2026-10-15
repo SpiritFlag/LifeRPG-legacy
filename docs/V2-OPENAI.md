@@ -4,6 +4,8 @@
 
 이후 사용자가 승인한 첫 합성 실호출은 2회 완료했다. 계측 오류와 예약 정리, 실제 사용량·판정·발견한 품질 문제는 [첫 실행 및 재개 기록](V2-OPENAI-FIRST-RUN.md)을 따른다. 아래의 무과금 검증 수치는 구현 완료 시점 기록이다.
 
+5단계 이후 합성 캠페인은 첫 HTTP 400에서 중단했다. [캠페인 평가 기록](V2-OPENAI-CAMPAIGN-20261015.md)과 [전송 schema·안전한 오류 진단 수정](V2-OPENAI-SCHEMA-FIX.md)을 함께 참고한다. 현재는 union 배타성 검증을 거친 `anyOf` 전송과 로컬 schema 사전 점검을 사용한다. 수정 후 유료 재평가는 아직 실행하지 않았다.
+
 ## 모델과 연결
 
 공식 API 모델 ID는 `gpt-6.1-sol`. Responses API와 Structured Outputs를 지원한다. reasoning은 `low`, `medium`, `high`, `xhigh`, `max`를 지원한다. **사용자 결정에 따라 기본값은 `medium`**이다. 모델 접근과 두 합성 사례의 지연·판정은 이후 [첫 실행 기록](V2-OPENAI-FIRST-RUN.md)에서 확인했다. 확장된 4단계 RPG 계약의 실모델 품질은 아직 검증하지 않았다. [공식 모델 문서](https://developers.openai.com/api/docs/models/gpt-6.1-sol)

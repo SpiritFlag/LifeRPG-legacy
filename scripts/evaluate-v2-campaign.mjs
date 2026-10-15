@@ -5,7 +5,8 @@ import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { PGlite } from '@electric-sql/pglite';
 import { readOpenAiConfig, reservation } from '../src/v2/openai-config.ts';
-import { OpenAiGm, createLiveOpenAiGm } from '../src/v2/openai-gm.ts';
+import { OpenAiGm, createLiveOpenAiGm, GM_OUTPUT_SCHEMA } from '../src/v2/openai-gm.ts';
+import { assertStructuredSchema } from '../src/v2/openai-schema.ts';
 import { measureSyntheticGm } from '../src/v2/synthetic-metrics.ts';
 import { scopedDatabase } from '../src/v2/storage.ts';
 import { configureBudget, budgetUsage } from '../src/v2/budget.ts';
@@ -79,7 +80,8 @@ export async function runEvaluation({dir,config,transport,mode='offline',metadat
     await json(join(dir,`context-${current}.json`),context);
     await guard.take(context.operation_id);
     const response=await transport(body,signal);
-    // The live adapter discards HTTP error bodies. Successful output is synthetic audit data only.
+    // The live adapter retains only allowlisted diagnostics for HTTP errors.
+    // Successful output is synthetic audit data only.
     await json(join(dir,`response-${current}.json`),response);
     return response;
   });
@@ -107,7 +109,8 @@ export async function runEvaluation({dir,config,transport,mode='offline',metadat
         const receipt=await service.execute('read_liferpg',{view:'request',operation_id:queued.operation_id},identity);
         const turn={case:current,request_id:item.input.request_id,elapsed_ms:Math.round(performance.now()-started),receipt};
         turns.push(turn);await json(join(dir,'turns.json'),turns);
-        console.info(JSON.stringify({case:current,status:receipt.status,error_code:receipt.error_code??null,api_calls:guard.calls}));
+        console.info(JSON.stringify({case:current,status:receipt.status,error_code:receipt.error_code??null,
+          api_calls:mode==='paid'?guard.calls:0,transport_calls:guard.calls}));
         if(!['committed','no_change'].includes(receipt.status))break;
       }
     } finally {
@@ -128,7 +131,7 @@ export async function runEvaluation({dir,config,transport,mode='offline',metadat
 
 async function main() {
   const config=readOpenAiConfig(process.env);
-  const preflight={model:config.model,reasoning:config.reasoning,max_input_tokens:config.maxInputTokens,max_output_tokens:config.maxOutputTokens,
+  const preflight={schema_preflight:assertStructuredSchema(GM_OUTPUT_SCHEMA),model:config.model,reasoning:config.reasoning,max_input_tokens:config.maxInputTokens,max_output_tokens:config.maxOutputTokens,
     price_card:config.price,key_present:!!process.env.OPENAI_API_KEY?.trim(),cap:CAP,
     per_call_reserved_micro_usd:reservation(config),maximum_reserved_micro_usd:reservation(config)*CASES.length};
   console.info(JSON.stringify(preflight,null,2));

@@ -8,6 +8,7 @@ import { readRpg,applyRpg,effectiveStats } from './rpg.ts';
 import { selectContext,defaultContextFits } from './context.ts';
 import { commitMemories } from './memory.ts';
 import type { MemoryRow } from './memory.ts';
+import type { SafeProviderError } from './openai-errors.ts';
 
 export type GmContext={
   operation_id:string; kind:string; input:Record<string,unknown>; initialized:boolean; xp:number;
@@ -23,7 +24,7 @@ export type GmContext={
 export type GmUsage={input_tokens:number;output_tokens:number;cost:number|null;details?:{
   cached_tokens:number;cache_write_tokens:number;reasoning_tokens:number;total_tokens:number;returned_model:string;service_tier:string;
 }};
-export type GmReply={proposal:unknown;usage?:GmUsage;failure?:{code:string;retryable:boolean}};
+export type GmReply={proposal:unknown;usage?:GmUsage;failure?:{code:string;retryable:boolean;provider_error?:SafeProviderError}};
 export interface GmAdapter {
   model:string; maxCost:number;provider?:'mock'|'openai';priceCard?:PriceCard;
   generate(context:GmContext,signal:AbortSignal):Promise<GmReply>;

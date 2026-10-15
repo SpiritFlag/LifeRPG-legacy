@@ -3,7 +3,8 @@ import { resolve } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { z } from 'zod';
 import { readOpenAiConfig,reservation } from './openai-config.ts';
-import { createLiveOpenAiGm } from './openai-gm.ts';
+import { createLiveOpenAiGm,GM_OUTPUT_SCHEMA } from './openai-gm.ts';
+import { assertStructuredSchema } from './openai-schema.ts';
 import { scopedDatabase } from './storage.ts';
 import { configureBudget,budgetUsage,resumeBudgetJobs } from './budget.ts';
 import { setOwnerBudget } from './admin.ts';
@@ -18,7 +19,7 @@ async function main() {
   const limit=z.coerce.number().int().min(0).max(10000000);
   const limits={lifetime:limit.parse(env.GM_LIFETIME_BUDGET_MICRO_USD??150000),daily:limit.parse(env.GM_DAILY_BUDGET_MICRO_USD??150000),monthly:limit.parse(env.GM_MONTHLY_BUDGET_MICRO_USD??150000)};
   const execute=process.argv.includes('--execute');
-  console.info(JSON.stringify({mode:execute?'paid_synthetic':'dry_run',model:config.model,reasoning:config.reasoning,
+  console.info(JSON.stringify({schema_preflight:assertStructuredSchema(GM_OUTPUT_SCHEMA),mode:execute?'paid_synthetic':'dry_run',model:config.model,reasoning:config.reasoning,
     max_input_tokens:config.maxInputTokens,max_output_tokens:config.maxOutputTokens,price_card:config.price,
     reservation_micro_usd:reservation(config),maximum_calls_this_run:2,maximum_reserved_micro_usd:2*reservation(config),limits},null,2));
   if(!execute)return; // No key access, no DB open, no networking in preflight.

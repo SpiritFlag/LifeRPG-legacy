@@ -194,6 +194,19 @@ test('refused output is paid once without retry; no provider body remains in DB'
   for(const table of ['payloads','attempts','requests'])assert.ok(!JSON.stringify((await db.query(`SELECT * FROM ${table}`)).rows).includes('UNIQUE-SYNTHETIC-REFUSAL'));
 });
 
+test('HTTP 400 diagnostics stay internal while worker preserves unknown reservation and fixed public error',async()=>{
+  const diagnostic={code:'invalid_json_schema',param:'text.format.schema',request_id:'req_'+'a'.repeat(32)};
+  let calls=0;const f=fixture(async()=>{calls++;return {status:400,body:null,diagnostic};});
+  const r=await f.start();await f.worker.runOnce();assert.equal(await f.worker.runOnce(),false);
+  const receipt=await f.result(r.operation_id);
+  assert.equal(calls,1);assert.equal(receipt.error_code,'gm_provider_rejected');
+  assert.ok(!JSON.stringify(receipt).includes(diagnostic.request_id));
+  assert.equal((await db.transaction(budgetUsage)).lifetime,'61440');
+  const attempt=(await db.query('SELECT state,actual_cost,input_tokens,output_tokens FROM attempts')).rows[0];
+  assert.deepEqual(attempt,{state:'unknown',actual_cost:null,input_tokens:null,output_tokens:null});
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM decisions')).rows[0].n,0);
+});
+
 test('game transaction failure cannot roll back already known usage; replayed settlement charges once',async()=>{
   const f=fixture();const r=await f.start();const claim=await f.worker.claim();
   const reply=await f.gm.generate(claim.context,signal());
